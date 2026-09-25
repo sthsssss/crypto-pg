@@ -1,0 +1,11 @@
+*.sqlite3
+__pycache__/
+.pytest_cache/
+.venv/
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
