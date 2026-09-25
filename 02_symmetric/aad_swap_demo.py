@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import secrets
+
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-KEY = bytes(range(32))  # Fixed only to make this learning demo reproducible.
 ALICE_ID = b"user:alice"
 BOB_ID = b"user:bob"
 ALICE_SECRET = b"alice-api-token"
@@ -14,13 +15,13 @@ BOB_SECRET = b"bob-api-token"
 
 
 def encrypt(aes: AESGCM, plaintext: bytes, aad: bytes | None):
-    # Fixed distinct nonces are acceptable only for this deterministic demo.
-    nonce = bytes([len(plaintext)]) * 12
+    # Length is not a unique identifier; generate a fresh nonce for every call.
+    nonce = secrets.token_bytes(12)
     return nonce, aes.encrypt(nonce, plaintext, aad)
 
 
 def main() -> None:
-    aes = AESGCM(KEY)
+    aes = AESGCM(AESGCM.generate_key(bit_length=256))
 
     print("WITHOUT AAD")
     alice_nonce, alice_encrypted = encrypt(aes, ALICE_SECRET, None)

@@ -8,6 +8,42 @@ The Korean bottom-up guide, [CRYPTOGRAPHY_BOTTOM_UP.md](CRYPTOGRAPHY_BOTTOM_UP.m
 connects these exercises to application-level encryption, KMS/Vault, public-key
 cryptography, certificates, TLS, and HTTPS.
 
+## 나를 위한 Crypto Book
+
+[개정 교재 읽기](CRYPTOGRAPHY_BOTTOM_UP.md)는 개발자를 위한 한국어 학습서입니다.
+기술 용어를 생략하지 않고 **문제 → 정의 → 손계산 → 공격 → 코드 → 확인 문제**로
+연결합니다. 읽는 순서는 바이트·해시·KDF·HMAC → AES-GCM → 저장과 키 관리 →
+DH·X25519·HKDF·서명·RSA → 인증서 → TLS/HTTPS입니다.
+
+특히 비대칭키는 작은 정수의 DH 계산부터 시작합니다. 부록에는 12개 확인 문제와
+해설, 용어 찾아보기가 있습니다. [개정 검토 기록](docs/BOOK_REVIEW.md)에서 기존
+설명의 공백과 수정 범위를 확인할 수 있습니다.
+
+### Setup (Python 3.10+)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install cryptography pytest
+python -m pytest
+```
+
+### 비대칭키와 TLS 실습
+
+```bash
+python3 03_asymmetric/key_roles_lab.py dh
+python3 03_asymmetric/key_roles_lab.py mitm
+python3 03_asymmetric/key_roles_lab.py rsa
+python3 03_asymmetric/key_roles_lab.py x25519
+python3 03_asymmetric/key_roles_lab.py signature
+python3 04_tls/tls_memory_lab.py
+```
+
+DH/RSA의 작은 정수는 보안용이 아닌 손계산용입니다. 실제 X25519 예제에도 peer
+authentication은 없습니다. TLS 예제는 Python `ssl`의 실제 TLS 1.3을 메모리
+buffer로 연결하며, 정상 연결·hostname 불일치·미신뢰 CA를 비교합니다. 네트워크를
+사용하거나 OS trust store를 변경하지 않으며 임시 인증서/key 파일은 정리합니다.
+
 ## Session 1: primitives and symmetric encryption
 
 Run the examples from this directory:
