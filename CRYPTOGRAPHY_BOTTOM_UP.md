@@ -3,7 +3,7 @@
 > 대상: 애플리케이션 개발 경험은 있지만 암호학 용어가 아직 하나의 그림으로 연결되지 않은 개발자
 >
 > 목표: `해시 → 비밀번호 저장 → HMAC → AES-GCM → 키 관리 → 비대칭키 → 인증서 → TLS/HTTPS`를 바텀업으로 연결한다.
-> 개정판: 2 · 기준일: 2026-09-25 · Python 3.10 이상
+> 개정판: 3 · 기준일: 2026-09-26 · Python 3.10 이상
 
 이 책은 프로그래밍을 처음 배우는 사람을 위한 책이 아니다. 함수, 바이트 배열, DB transaction, HTTP는 알고 있지만 암호학의 수학적 전제와 protocol의 연결을 처음 구축하는 개발자를 위한 책이다. 전문 용어를 생략하지 않고, 그 용어가 가리키는 **입력·출력·소유자·보안 성질**을 설명한다.
 
@@ -26,6 +26,7 @@
 | 비대칭 암호 | 다른 private key로 왜 같은 비밀이 계산되는가? | [10장](#asymmetric) |
 | 신뢰와 통신 | 공개키가 누구 것인지 어떻게 알고 HTTPS로 연결하는가? | [11장](#certificates), [12장](#tls), 13~14장 |
 | 연습과 복습 | 내 말로 설명하고 실험으로 반증할 수 있는가? | [18장](#labs), [연습문제·해설](#exercises), [용어 찾아보기](#glossary) |
+| 실습 코드 독해 | 내가 실행한 함수에서 실제로 어떤 값이 변하는가? | [부록 D: 함수별 실행 추적](#function-walkthrough) |
 
 ### 교재의 전개에서 참고한 점
 
@@ -309,6 +310,8 @@ SHA-256이 흔히 쓰이는 곳은 파일 지문, 콘텐츠 주소, 디지털 �
 
 실습: [`01_primitives/random_and_hash.py`](01_primitives/random_and_hash.py)
 
+코드와 연결: [D.1 — `sha256()`과 `differing_bits()`](#trace-hash).
+
 ### 4.1 SHA-256 내부의 데이터 흐름
 
 SHA-256을 `hashlib` 호출 이상의 수준에서 이해하려면 **padding → block → state → round → digest**를 연결하면 된다.
@@ -428,6 +431,8 @@ Argon2id("password", salt) == verifier?
 
 실습: [`01_primitives/password_kdf.py`](01_primitives/password_kdf.py)
 
+코드와 연결: [D.2 — `register → derive → verify`](#trace-password).
+
 ### 5.1 `derived_key`는 이름만으로 역할이 정해지지 않는다
 
 KDF는 Key Derivation Function이다. 같은 출력 바이트를 어떤 시스템에서는 암호화 key로 쓰고, 다른 시스템에서는 비밀번호 검증값으로 쓸 수 있다. 파일의 `derived_key`는 후자다. 따라서 이 예제에서는 `password_verifier`로 읽으면 된다.
@@ -485,6 +490,8 @@ received_tag == HMAC(K, received_message)
 [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104.html)는 MAC을 비밀키를 공유하는 두 당사자가 전송 정보를 검증하는 메커니즘으로 설명한다.
 
 실습: [`01_primitives/hmac_demo.py`](01_primitives/hmac_demo.py)
+
+코드와 연결: [D.3 — `authenticate()`와 검증](#trace-hmac).
 
 ### 6.1 그냥 SHA256(key ∥ message)를 쓰면 안 되는가
 
@@ -554,7 +561,7 @@ SubBytes의 치환표(S-box)는 256개의 byte 입력 각각에 다른 byte 출�
 
 평문을 16바이트씩 나누어 그대로 AES에 넣으면 같은 평문 block은 같은 ciphertext block이 된다. 이것이 ECB의 패턴 노출이다. 끝의 짧은 block 처리와 변조 검출도 추가로 정해야 한다. 따라서 block cipher를 실제 메시지에 적용하는 mode of operation이 필요하다.
 
-> 학습 경계: 이 장의 손계산은 XOR·counter·입출력 의존성을 설명한다. AES의 S-box나 GCM의 유한체 곱셈까지 구현하는 것은 별도 심화 과제다. 운영 코드는 고수준 AEAD API를 사용한다.
+> 학습 경계: 이 장의 손계산은 XOR·counter·입출력 의존성을 설명한다. [D.6](#trace-tag)에서는 선택 심화로 GHASH와 tag를 재구성한다. AES 자체의 구현과 운영 최적화는 다루지 않는다. 운영 코드는 고수준 AEAD API를 사용한다.
 
 AES는 128비트 블록을 변환하는 block cipher다. AES-128/192/256의 숫자는 key 길이를 의미하고, 세 종류 모두 128비트 블록을 처리한다. 이는 [NIST FIPS 197](https://csrc.nist.gov/pubs/fips/197/final)에 정의되어 있다.
 
@@ -648,6 +655,8 @@ key 자체는 이 레코드에 넣지 않는다.
 - [`02_symmetric/nonce_reuse.py`](02_symmetric/nonce_reuse.py): nonce 재사용 실패
 - [`02_symmetric/aad_swap_demo.py`](02_symmetric/aad_swap_demo.py): 레코드 바꿔치기와 AAD
 
+코드와 연결: [D.4 — Envelope/API](#trace-envelope), [D.5 — counter와 XOR](#trace-counter), [D.6 — tag](#trace-tag), [D.7 — 실패 실습](#trace-attacks).
+
 ---
 
 <a id="storage"></a>
@@ -729,6 +738,8 @@ SQLite                    ≈ 업무 DB
 ```
 
 실습: [`02_symmetric/db_encryption_demo.py`](02_symmetric/db_encryption_demo.py)
+
+코드와 연결: [D.8 — 환경변수에서 DB까지의 함수 호출](#trace-database).
 
 로컬 실습의 실제 SQL 행을 더 구체적으로 보면:
 
@@ -1236,6 +1247,8 @@ S ── HKDF(protocol context, transcript, labels) ──→ AES key, IV, 기�
 HKDF는 원시 key material에서 목적과 문맥이 분리된 key들을 만든다. [RFC 5869](https://www.rfc-editor.org/rfc/rfc5869.html)
 
 실습: [`03_asymmetric/x25519_exchange.py`](03_asymmetric/x25519_exchange.py)
+
+코드와 연결: [D.9 — `exchange()`와 `derive_aes_key()`](#trace-exchange).
 
 ### 10.4 HKDF: shared secret과 AES key는 왜 구분하는가
 
@@ -1770,6 +1783,8 @@ python3 04_tls/tls_memory_lab.py
 
 생성한 인증서는 해당 실행의 client에서만 신뢰한다. OS trust store를 변경하지 않고 임시 private key 파일도 실행 후 제거한다. 인증서 수명·갱신·실제 DNS·소켓 운영을 다루는 배포 예제는 아니다.
 
+코드와 연결: [D.11 — `temporary_pki()`와 `run_connection()`](#trace-tls).
+
 ---
 
 ## 13. 실제 웹 아키텍처에서는 TLS가 어디서 끝나는가
@@ -2289,3 +2304,679 @@ IV(initialization vector)는 모드마다 요구사항이 다르다. 이 책의 
 - 암호화된 데이터의 검색, end-to-end encryption, 메신저 ratchet, post-quantum 전환.
 
 알아야 할 경계를 명확히 남기는 것은 설명을 생략하는 것과 다르다. 지금의 목표는 **어떤 비밀이 어느 연산에 참여하고, 누가 무엇을 검증하며, 어떤 공격이 여전히 가능한지** 스스로 추적하는 것이다.
+
+---
+
+<a id="function-walkthrough"></a>
+
+## 부록 D. 내가 실행한 함수를 입력부터 출력까지 해부하기
+
+### D.0 이 부록의 읽는 방법
+
+본문이 개념의 지도라면 이 부록은 debugger의 실행 경로다. 코드 파일을 옆에 열고 **입력 → 지역 변수 → 라이브러리 호출 → 반환값 → 저장/전송 → 실패** 순서로 따라간다. 함수 문법이 아니라 해당 인자와 순서가 필요한 이유를 설명한다.
+
+아래에서 구별할 세 층은 다음과 같다.
+
+```text
+우리 함수:       nonce 생성, record 구성, DB 저장, 오류 처리
+라이브러리 API:  AESGCM.encrypt, hashlib.scrypt, private.exchange 등
+암호 알고리즘:   counter·XOR·GHASH, memory mixing, scalar multiplication 등
+```
+
+우리 코드가 API를 호출한다고 그 내부 알고리즘을 직접 구현한 것은 아니다. 반대로 API가 제공하는 보안 성질만으로 저장·전송 프로토콜의 모든 문제가 해결되는 것도 아니다.
+
+| 읽을 절 | 실습 코드 | 먼저 읽을 본문 |
+|---|---|---|
+| [D.1](#trace-hash) | `random_and_hash.py` | 0장, 4장 |
+| [D.2](#trace-password) | `password_kdf.py` | 5장 |
+| [D.3](#trace-hmac) | `hmac_demo.py` | 6장 |
+| [D.4](#trace-envelope) | `aes_gcm.py` | 7장 |
+| [D.5](#trace-counter) | `gcm_walkthrough.py` | 7.0~7.1절 |
+| [D.6](#trace-tag) | 라이브러리에 맡겼던 GCM tag 재구성 | 7.2절, D.5 |
+| [D.7](#trace-attacks) | `nonce_reuse.py`, `aad_swap_demo.py` | 7장 |
+| [D.8](#trace-database) | `db_encryption_demo.py` | 8~9장 |
+| [D.9](#trace-exchange) | `x25519_exchange.py` | 10.1~10.5절 |
+| [D.10](#trace-roles) | `key_roles_lab.py` | 10장 |
+| [D.11](#trace-tls) | `tls_memory_lab.py` | 11~12장 |
+
+`# book-check: 이름`으로 시작하는 Python 블록은 **각각 독립 실행 가능한 검산 코드**다. 저장소 루트에서 실행하며, `runpy.run_path()`로 기존 파일의 함수를 가져온다. 이때 파일의 `main()`은 실행되지 않는다. `lab["derive"]`는 그 파일에 정의된 `derive` 함수다. 같은 블록들을 테스트에서도 직접 실행하므로, 책의 assert와 실제 함수가 따로 노는 것을 방지한다.
+
+```bash
+python3 -m pytest tests/test_function_walkthrough.py -q
+```
+
+**안전 경계:** 고정 key·salt·비밀번호와 출력값은 모두 공개된 학습 fixture다. 운영 비밀을 넣거나 출력하지 않는다. 특히 고정 GCM key/nonce로 여러 메시지를 암호화하는 패턴을 복사하지 않는다. 정상 사용법은 기존 고수준 예제처럼 적절한 key 관리와 매번 새로운 nonce를 사용하는 것이다.
+
+<a id="trace-hash"></a>
+
+### D.1 `random_and_hash.py`: 난수 생성과 해시는 서로 다른 계산이다
+
+코드: [`01_primitives/random_and_hash.py`](01_primitives/random_and_hash.py).
+
+`main()`은 난수 key를 한 번 생성하고, 두 메시지를 각각 해시하고, 해시 간 다른 비트 수를 센다. 여기서 첫 번째 함정은 **생성한 key가 `sha256()`에 전달되지 않는다**는 사실이다. 세 줄이 나란히 있다고 key로 메시지를 암호화한 것이 아니다.
+
+```python
+key = secrets.token_bytes(32)   # 매 실행에서 새로 생성; 아래 해시 입력에는 없음
+first = sha256(b"message A")
+second = sha256(b"message B")
+```
+
+`sha256(data)`의 유일한 입력은 bytes다. `hashlib.sha256(data)`는 입력을 처리한 hash 객체를 만들고, `.digest()`는 32바이트 결과를 꺼낸다. `.hex()`는 나중에 그 결과를 64글자로 표시할 뿐, 다시 해시하는 연산이 아니다. 같은 입력의 hash는 실행마다 같다. 출력 중 난수 key만 달라져도 이상하지 않다.
+
+`differing_bits(left,right)`는 같은 위치의 두 byte를 XOR하고, 결과에서 1인 비트 수를 모두 합친다. 예를 들어 `0b1010 XOR 0b0011 = 0b1001`이므로 다른 비트는 2개다. 길이 검사는 `zip()`이 짧은 쪽에서 멈춰 일부 입력을 조용히 무시하지 않게 한다.
+
+```python
+# book-check: hash
+import runpy
+lab = runpy.run_path("01_primitives/random_and_hash.py")
+first = lab["sha256"](b"message A")
+second = lab["sha256"](b"message B")
+assert first.hex() == "b0fbd89676741e2deb64016c4467c51489456adf29a9917857fe5e778ecee721"
+assert second.hex() == "d34c3b03c73e442266f98f12e31704fae0ecc9ba2b118757ad821ddc2954e260"
+assert lab["differing_bits"](first, second) == 131
+assert lab["differing_bits"](b"\x0a", b"\x03") == 2
+```
+
+**결과 해석:** 131/256은 이 두 입력에서 관찰한 값이지, 모든 입력 변화가 정확히 절반의 비트를 바꾼다는 규칙이 아니다. SHA-256 내부 연산은 4.1절의 padding·schedule·round다. 이 실습은 출력 변화만 관찰하며 collision resistance를 증명하지 않는다.
+
+**직접 바꿔 보기:** `message A`를 두 번 넣으면 `differing_bits`는 0이다. `.digest()` 대신 `.hexdigest()`를 쓰면 타입이 `str`로 바뀌므로 같은 함수에 그대로 넣을 수 없다. 암호 연산의 입력 바이트와 표시 문자열의 차이를 확인하자.
+
+<a id="trace-password"></a>
+
+### D.2 `password_kdf.py`: 저장값을 만들 때와 검증할 때
+
+코드: [`01_primitives/password_kdf.py`](01_primitives/password_kdf.py).
+
+#### `PasswordRecord`: 나중에 재계산할 수 있게 남기는 것
+
+이 dataclass는 `salt`, `derived_key`, `n`, `r`, `p`를 보관한다. 여기서 `derived_key`의 역할은 **password verifier**다. 실제 로그인 서버라면 이 값들을 DB에 직렬화한다. 현재 파일은 메모리 객체만 만들며 DB에 쓰지는 않는다. 출력의 `Store ...`는 운영 원칙을 말하는 문장이지 DB write가 완료됐다는 로그가 아니다.
+
+#### `register(password)`: 최초 등록
+
+```text
+str password
+  → secrets.token_bytes(16)로 새 salt 생성
+  → 빈 derived_key를 가진 임시 record로 기본 비용 파라미터 선택
+  → derive(password, salt, n, r, p)
+  → 완성된 PasswordRecord 반환
+```
+
+임시 `derived_key=b""`는 계산 입력이나 secret이 아니다. 기본 파라미터를 담기 위한 코드 구조일 뿐이며, 마지막에 새 record로 대체된다. `frozen=True`이므로 객체의 필드를 나중에 덮어쓰는 방식이 아니다.
+
+#### `derive(...)`: 라이브러리에 정확히 무엇을 넘기는가
+
+입력 password는 UTF-8 bytes로 바뀐다. scrypt의 실제 입력은 이 bytes, salt, N/r/p, 출력 길이 32바이트다. 같은 여섯 값이면 결과가 같다. Unicode 정규화나 앞뒤 공백 제거를 이 함수가 자동 수행하지 않으므로, 시각적으로 비슷한 문자열이 같은 입력이라고 가정하지 않는다.
+
+`hashlib.scrypt` 안의 큰 흐름은 **PBKDF2로 중간 블록 생성 → ROMix → PBKDF2로 출력 파생**이다. PBKDF2는 HMAC 기반 password KDF인데 scrypt의 바깥 단계에서는 반복 횟수 1로 사용된다. 주된 memory-hard 작업은 ROMix에 있다. ROMix는 길이 `128*r`바이트 상태들을 N개 저장한 뒤, 현재 상태에서 얻은 인덱스로 이전 상태를 선택해 XOR·BlockMix를 반복한다. BlockMix는 64바이트 단위로 Salsa20/8의 덧셈·rotate·XOR 혼합과 재배열을 사용한다. 여기서 Salsa20/8은 사용자 데이터를 암호화하는 용도가 아니라 내부 mixing 함수다. 정확한 규격은 [RFC 7914](https://www.rfc-editor.org/rfc/rfc7914.html)를 따른다.
+
+우리 값에서 중간 상태 하나는 `128*8=1024`바이트, 주된 저장 배열은 `16384*1024=16 MiB`다. 이 중간 메모리는 verifier와 함께 DB에 저장하는 값이 아니다. 후보를 계산하는 동안 필요한 작업 공간이다. `p=1`은 ROMix 작업 묶음 하나를 뜻하며, p를 늘린다고 Python 함수가 자동으로 p개 thread를 띄운다는 뜻은 아니다.
+
+고정 salt로 등록 이후의 계산을 재현해 보자. 이 블록은 **테스트용**이며 실제 `register()`의 랜덤 salt를 고정하도록 코드를 바꾸지 않는다.
+
+```python
+# book-check: password
+import runpy
+lab = runpy.run_path("01_primitives/password_kdf.py")
+salt = bytes(range(16))
+verifier = lab["derive"]("password", salt, n=2**14, r=8, p=1)
+assert verifier.hex() == "ea23095e981e22db97492de26a5e5c794ea8f8b400d1a28803c39199396134c5"
+record = lab["PasswordRecord"](salt=salt, derived_key=verifier)
+assert lab["verify"]("password", record)
+assert not lab["verify"]("Password", record)
+```
+
+#### `verify(password,record)`: 이때 salt를 새로 뽑지 않는다
+
+```text
+제출된 password + 저장했던 salt + 저장했던 n/r/p
+  → derive로 candidate 계산
+  → compare_digest(candidate, stored derived_key)
+  → True 또는 False
+```
+
+등록 때와 동일한 조건에서 후보를 재계산해야 한다. 검증할 때 salt를 새로 만들면 정답 비밀번호라도 비교값이 달라진다. `compare_digest`는 복호화 함수가 아니라 timing leakage를 줄이기 위한 비교 API다. 길이·타입 정보와 모든 시스템 수준 timing 차이를 숨겨 준다는 뜻은 아니다. [Python hmac 문서](https://docs.python.org/3/library/hmac.html#hmac.compare_digest)
+
+**공격자 관점:** DB의 record를 획득하면 위의 `verify`와 같은 계산을 자기 장비에서 후보마다 수행할 수 있다. 안전성은 “검증값을 공개해도 추측이 불가능함”이 아니라 **비밀번호의 예측 난이도와 후보당 비용**이다. 실제 서비스에서는 DB 파라미터·포맷도 검증하고, 동시 요청에 의한 메모리 고갈을 제한해야 한다. 이 학습 함수가 그것까지 구현하지는 않는다.
+
+<a id="trace-hmac"></a>
+
+### D.3 `hmac_demo.py`: 같은 key로 재계산하는 검증
+
+코드: [`01_primitives/hmac_demo.py`](01_primitives/hmac_demo.py).
+
+`authenticate(key,message)`는 `hmac.new(key,message,hashlib.sha256).digest()`를 반환한다. `hashlib.sha256`은 사용할 hash 알고리즘을 고르는 인자다. 이때 `key`는 SHA-256 함수의 숨겨진 옵션으로 들어가는 것이 아니라 **HMAC 구성의 입력**이다.
+
+`verify(key,message,tag)`는 기대 tag를 `authenticate`로 다시 만들고 수신 tag와 비교한다. tag에서 message를 복원하거나 key를 추출하는 단계는 없다. 네트워크로 전달할 것은 message와 tag이고, K는 송수신자가 미리 공유했다고 가정한다.
+
+고정 예에서 `key=b"k"*32`다. ASCII `k`는 `0x6b`이므로 K0 앞 32바이트는 `6b`, 뒤 32바이트는 `00`이다. K0 XOR ipad의 앞부분은 `6b XOR 36 = 5d`, K0 XOR opad의 앞부분은 `6b XOR 5c = 37`이 된다. 이것을 6.1절 수식에 넣으면:
+
+```python
+# book-check: hmac
+import hashlib
+import runpy
+lab = runpy.run_path("01_primitives/hmac_demo.py")
+key = b"k" * 32
+message = b"transfer=100&to=bob"
+k0 = key + bytes(32)  # 이 fixture는 원래 key가 64바이트보다 짧다.
+inner = hashlib.sha256(bytes(x ^ 0x36 for x in k0) + message).digest()
+tag = hashlib.sha256(bytes(x ^ 0x5c for x in k0) + inner).digest()
+assert inner.hex() == "ce42a2ba326a342e963ad7ca898ad770cfa2e9daad7fc2d4433a0851d1ad6b68"
+assert tag.hex() == "d41e62a6bb972752bb659628134b8551e94779a2562d96847cef566ade207bb5"
+assert tag == lab["authenticate"](key, message)
+assert lab["verify"](key, message, tag)
+assert not lab["verify"](key, b"transfer=900&to=bob", tag)
+```
+
+위 코드는 **이 짧은 key에 대한 수식 검산**이지 임의 길이 key를 처리하는 HMAC 대체 구현이 아니다. 실제 함수는 표준 라이브러리의 정규화와 구현을 사용한다.
+
+변조 실험에서는 message를 바꾸고 기존 tag를 그대로 둔다. K를 아는 실습자가 변조 message에 대해 새 tag를 만들면 당연히 검증된다. 공격자가 왜 그 작업을 못 하는지 설명할 때는 **K를 모른다는 전제**를 빠뜨리면 안 된다. 같은 정상 message/tag를 두 번 검증하면 둘 다 True다. 이 함수에는 replay 기록이 없기 때문이다.
+
+<a id="trace-envelope"></a>
+
+### D.4 `aes_gcm.py`: 암호화 함수와 포장 함수의 경계
+
+코드: [`02_symmetric/aes_gcm.py`](02_symmetric/aes_gcm.py).
+
+#### `generate_key()`와 `encrypt()`
+
+`generate_key()`는 256비트, 즉 32바이트 secret을 생성한다. 이 파일의 `main()`에서는 **딱 한 번** 호출한다. 두 번의 `encrypt()`가 서로 다른 key로 실행되는 것이 아니다.
+
+`encrypt(key,plaintext,aad)`는 새 12바이트 nonce를 만들고, `AESGCM(key).encrypt(nonce,plaintext,aad)`로 암호 연산을 수행한 뒤 Envelope에 담는다. key는 Envelope 안에 없다.
+
+| 변수 | 타입·길이 | 다음에 쓰이는 곳 |
+|---|---|---|
+| `key` | bytes, 32 | AESGCM 객체의 비밀 입력 |
+| `nonce` | bytes, 12 | 암호 연산과 Envelope |
+| `plaintext` | bytes, 예제에서는 23 | 숨길 입력 |
+| `aad` | bytes, 길이 가변 | 인증 문맥; Envelope에 자동 저장되지 않음 |
+| 지역 변수 `ciphertext` | bytes, 예제에서는 39 | 실제로는 C 23바이트 + tag 16바이트 |
+
+`cryptography`의 이 API는 ciphertext 뒤에 16바이트 tag를 붙여 반환한다. 변수 이름만 보고 tag가 없는 것으로 오해하지 않는다. [AESGCM API](https://cryptography.io/en/latest/hazmat/primitives/aead/#cryptography.hazmat.primitives.ciphers.aead.AESGCM)
+
+#### `Envelope.to_json()`은 추가 암호화가 아니다
+
+nonce와 C/tag bytes를 URL-safe Base64 문자열로 만들고 version과 함께 JSON에 넣는다. `.decode("ascii")`는 Base64의 ASCII bytes를 JSON에 넣을 문자열로 바꾸는 작업이다. JSON을 받는 쪽은 역으로 Base64 decode를 해야 한다. 원래 plaintext의 문자 인코딩과는 별개다.
+
+현재 파일에는 `from_json()`이 없다. `main()`은 메모리의 Envelope를 직접 `decrypt()`에 넘긴다. JSON 출력만 보고 네트워크 수신·파싱까지 검증했다고 생각하면 안 된다. 아래는 **신뢰한 자기 출력만** 되읽는 검산이며 불신 입력용 parser 구현 예제는 아니다.
+
+```python
+# book-check: envelope
+import base64
+import json
+import runpy
+lab = runpy.run_path("02_symmetric/aes_gcm.py")
+key = lab["generate_key"]()
+aad = b"content-type=text/plain;sender=alice"
+plaintext = b"the launch code is 1234"
+envelope = lab["encrypt"](key, plaintext, aad)
+assert len(envelope.nonce) == 12
+assert len(envelope.ciphertext) == 23 + 16
+obj = json.loads(envelope.to_json())
+assert set(obj) == {"version", "nonce", "ciphertext"}
+assert base64.urlsafe_b64decode(obj["nonce"]) == envelope.nonce
+assert base64.urlsafe_b64decode(obj["ciphertext"]) == envelope.ciphertext
+assert lab["decrypt"](key, envelope, aad) == plaintext
+```
+
+#### `decrypt()`에서 오류가 갈리는 지점
+
+먼저 version이 1인지 확인한다. 아니면 라이브러리를 부르기 전에 `ValueError`다. 맞으면 key·nonce·C/tag·AAD를 라이브러리에 넘긴다. tag가 검증되지 않으면 `InvalidTag`, 성공하면 plaintext bytes가 반환된다. UI용 UTF-8 decode는 그 뒤의 앱 처리다.
+
+여기서 version 검사는 지원 포맷을 고르는 **정책 검사**이지 version을 tag에 바인딩한 것이 아니다. 이 예제의 AAD에는 version이 자동 포함되지 않는다. 현재 단일 version에서는 다른 version을 거절하지만, 나중에 여러 포맷을 지원할 때는 version과 의미 있는 metadata를 명확히 인증해야 한다.
+
+**확인:** AAD가 Envelope에 없다면 복호화는 어떻게 가능한가? 호출자가 같은 문맥을 다시 제공하기 때문이다. 실제 시스템에서는 그 문맥의 출처와 직렬화 규칙까지 정해야 한다.
+
+<a id="trace-counter"></a>
+
+### D.5 `gcm_walkthrough.py`: plaintext가 AES 입력이 아닌 것을 코드로 확인하기
+
+코드: [`02_symmetric/gcm_walkthrough.py`](02_symmetric/gcm_walkthrough.py).
+
+이 실습은 출력 재현을 위해 KEY와 NONCE를 고정한다. **main() 한 번에서 동일한 계산을 수동 방식과 라이브러리 방식으로 비교하는 장치**다. 고정 nonce를 여러 실제 메시지에 써도 된다는 뜻이 아니다.
+
+#### 작은 함수 네 개의 계약
+
+`chunks(data,16)`은 offset 0,16,32…에서 slice를 반환한다. 마지막 slice는 16바이트보다 짧아도 그대로 반환한다. padding을 넣지 않는다.
+
+`counter_block(nonce,counter)`는 nonce가 12바이트인지 검사한 뒤 `nonce + counter.to_bytes(4,"big")`를 반환한다. `big`은 큰 자릿수 byte가 먼저라는 뜻이다. counter 2는 `00 00 00 02`이며 ASCII 문자열 `b"2"`가 아니다.
+
+`aes_encrypt_one_block(key,input_block)`는 16바이트 여부를 검사하고 AES 블록 연산 한 번을 수행한다. 코드의 `modes.ECB()`는 **한 블록의 E_K 연산에 접근하기 위한 수단**이다. 파일 전체를 ECB로 암호화하는 설계를 권하는 것이 아니다. `update()`가 데이터를 공급하고 `finalize()`가 이 암호 컨텍스트를 마무리한다. 그 둘의 결과를 연결해 한 블록의 출력을 받는다.
+
+`xor(left,right)`는 `zip()` 범위만큼 XOR한다. 여기서는 마지막 짧은 plaintext block 길이만큼 mask를 사용하는 목적에 맞는다. 그러나 범용 유틸리티로서 길이 불일치를 검출하지는 않는다. D.1의 `differing_bits`와 달리 일부러 짧은 길이에 맞춰 동작한다는 것을 알고 읽어야 한다.
+
+#### `build_ciphertext()`의 두 번의 loop를 펼치기
+
+입력 `b"the launch code is 1234"`는 **23바이트**다. 첫 블록은 뒤 공백을 포함한 `b"the launch code "` 16바이트, 둘째는 `b"is 1234"` 7바이트다. loop의 `start=2`는 GCM이 `N || 1`을 tag mask용 J0로 예약하기 때문이다.
+
+```text
+KEY = 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+N   = 202122232425262728292a2b
+
+첫 블록:
+P1         = 746865206c61756e636820636f646520
+AES input  = 202122232425262728292a2b00000002
+mask1      = d23aa6706c981a0e1a7c42cec118f4f9
+C1         = a652c35000f96f60791462adae7c91d9
+
+둘째 블록:
+P2         = 69732031323334
+AES input  = 202122232425262728292a2b00000003
+mask2      = d049ec9c878063ee6cf66c12498a5e09
+사용 부분  = d049ec9c878063                 (앞 7바이트)
+C2         = b93accadb5b357
+
+반환 C = C1 || C2 = a652c35000f96f60791462adae7c91d9b93accadb5b357
+```
+
+첫 byte만 손으로 확인하면 plaintext `0x74` XOR mask `0xd2` = ciphertext `0xa6`이다. 동일 key여도 둘째 블록의 AES 입력은 끝이 3이므로 mask가 다르다. nonce는 AES **입력 블록**에 들어가고 key는 AES **변환을 정하는 입력**으로 들어간다.
+
+```python
+# book-check: counter
+import runpy
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+lab = runpy.run_path("02_symmetric/gcm_walkthrough.py")
+key, nonce, plaintext = lab["KEY"], lab["NONCE"], lab["PLAINTEXT"]
+assert list(lab["chunks"](plaintext, 16)) == [b"the launch code ", b"is 1234"]
+assert lab["counter_block"](nonce, 2).hex() == "202122232425262728292a2b00000002"
+mask1 = lab["aes_encrypt_one_block"](key, lab["counter_block"](nonce, 2))
+assert mask1.hex() == "d23aa6706c981a0e1a7c42cec118f4f9"
+assert lab["xor"](plaintext[:16], mask1).hex() == "a652c35000f96f60791462adae7c91d9"
+manual = lab["build_ciphertext"](key, nonce, plaintext)
+encrypted = AESGCM(key).encrypt(nonce, plaintext, lab["AAD"])
+assert manual.hex() == "a652c35000f96f60791462adae7c91d9b93accadb5b357"
+assert manual == encrypted[:-16]
+assert encrypted[-16:].hex() == "1d8ff393a19510e73cd2cb89fe15b51f"
+```
+
+#### `main()`의 마지막 비교가 말하는 것
+
+`encrypted[:-16]`은 C, `encrypted[-16:]`은 tag다. `manual == library_ciphertext`는 **counter/XOR 부분이 일치했다**는 결과다. 수동 코드가 tag도 구현했다는 뜻이 아니다. 마지막 `AESGCM.decrypt()`는 라이브러리의 tag 검증까지 거쳐야 성공한다.
+
+**직접 바꿔 보기:** counter를 1부터 시작하도록 임시로 바꾸면 수동 C와 라이브러리 C가 달라진다. key를 바꾸면 mask와 C가 달라진다. AAD만 바꾸면 수동 C는 그대로다. AAD는 이 함수의 인자가 아니며, tag 계산에 참여하기 때문이다. 변형 실험 후에는 원래 코드로 되돌리고 fixture를 다른 데이터 암호화에 재사용하지 않는다.
+
+<a id="trace-tag"></a>
+
+### D.6 선택 심화: `AESGCM.encrypt()`가 만드는 tag까지 따라가기
+
+D.5에서 멈추면 “ciphertext는 알겠는데 tag는 또 마법인가?”라는 질문이 남는다. 여기서는 **96비트 nonce, 128비트 tag**라는 현재 실습 조건에 한정해 tag를 재구성한다. 이것은 일반 GCM 라이브러리나 안전한 저수준 구현을 작성하는 과제가 아니다.
+
+GHASH 입력은 **AAD 뒤의 block padding → C 뒤의 block padding → 두 길이**다. Padding은 각 부분을 16바이트 경계까지 0으로 채운다. 원래부터 경계에 맞으면 더 넣지 않는다. 이 padding은 인증 계산 내부용이지 ciphertext 뒤에 저장할 padding이 아니다.
+
+현재 AAD `b"sender=alice"`는 12바이트, C는 23바이트이므로 총 네 개의 GHASH 블록이 된다.
+
+```text
+X1 = AAD 12바이트 + 0 네 바이트
+X2 = C의 첫 16바이트
+X3 = C의 남은 7바이트 + 0 아홉 바이트
+X4 = AAD 비트 길이 96을 8바이트 big-endian으로
+     || C 비트 길이 184를 8바이트 big-endian으로
+   = 000000000000006000000000000000b8
+
+H  = AES_K(0^128)
+Y0 = 0^128
+Yi = (Y(i-1) XOR Xi) · H       ← GHASH의 유한체 곱셈
+U  = Y4
+T  = U XOR AES_K(N || 00000001)
+```
+
+`·`는 Python 정수의 `*`가 아니다. 128비트 값을 다항식 계수로 해석하고, 덧셈을 XOR로 하며, 곱셈 결과를 정해진 다항식 `x^128+x^7+x^2+x+1`로 환원하는 GF(2^128) 연산이다. 환원은 결과를 다시 128비트 표현으로 가져오는 역할을 한다. GCM은 byte의 bit를 다항식 계수에 대응시키는 순서까지 정한다. [NIST GCM 명세](https://csrc.nist.gov/pubs/sp/800/38/d/final)
+
+아래 `multiply()`의 128회 반복은 그 곱셈을 드러내기 위한 교육 코드다. x의 bit가 1일 때 해당 항을 XOR하고, 다음 항으로 이동하며 범위를 넘은 부분을 `0xe1 << 120`으로 환원한다. 이 상수는 정해진 bit 표현에서의 환원 상수이며 임의의 magic number가 아니다. Python의 분기·큰 정수 연산은 constant-time 암호 구현으로 취급할 수 없다.
+
+```python
+# book-check: gcm_tag
+import runpy
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+lab = runpy.run_path("02_symmetric/gcm_walkthrough.py")
+
+def multiply(x, y):
+    product = 0
+    moving = y
+    for bit in range(127, -1, -1):
+        if (x >> bit) & 1:
+            product ^= moving
+        dropped = moving & 1
+        moving >>= 1
+        if dropped:
+            moving ^= 0xe1 << 120
+    return product
+
+def pad16(data):
+    return data + bytes((-len(data)) % 16)
+
+def teaching_tag(key, nonce, aad, ciphertext):
+    # 12-byte nonce, 16-byte tag only. No general-purpose crypto API.
+    assert len(nonce) == 12
+    aes_block = lab["aes_encrypt_one_block"]
+    h = int.from_bytes(aes_block(key, bytes(16)), "big")
+    lengths = (len(aad) * 8).to_bytes(8, "big") + (len(ciphertext) * 8).to_bytes(8, "big")
+    blocks = pad16(aad) + pad16(ciphertext) + lengths
+    state = 0
+    for offset in range(0, len(blocks), 16):
+        block = int.from_bytes(blocks[offset:offset + 16], "big")
+        state = multiply(state ^ block, h)
+    j0 = nonce + (1).to_bytes(4, "big")
+    return lab["xor"](state.to_bytes(16, "big"), aes_block(key, j0))
+
+key, nonce, aad = lab["KEY"], lab["NONCE"], lab["AAD"]
+encrypted = AESGCM(key).encrypt(nonce, lab["PLAINTEXT"], aad)
+tag = teaching_tag(key, nonce, aad, encrypted[:-16])
+assert tag.hex() == "1d8ff393a19510e73cd2cb89fe15b51f"
+assert tag == encrypted[-16:]
+```
+
+이제 tag가 어떤 입력을 인증하는지 추적할 수 있다. C나 AAD를 바꾸면 GHASH 입력이 바뀌고, nonce를 바꾸면 J0의 AES mask가 바뀌며, key를 바꾸면 H와 mask가 바뀐다. nonce는 데이터 C를 만드는 과정에도 참여한다.
+
+**해석의 경계:** tag 재구성 성공은 한 fixture에서 명세와 라이브러리 결과가 맞는다는 뜻이다. 구현의 constant-time 성질, 모든 입력 한도, nonce 관리, 오류 처리 안전성을 입증하지 않는다. 실제 복호화는 여전히 `AESGCM.decrypt()`에 맡기고 검증 전 plaintext를 사용하지 않는다. 이 교육 함수에는 decrypt 자체가 없다.
+
+<a id="trace-attacks"></a>
+
+### D.7 `nonce_reuse.py`와 `aad_swap_demo.py`: 정상 API 호출도 틀린 조합이면 실패한다
+
+코드: [`02_symmetric/nonce_reuse.py`](02_symmetric/nonce_reuse.py), [`02_symmetric/aad_swap_demo.py`](02_symmetric/aad_swap_demo.py).
+
+두 파일은 `AESGCM`을 잘못 구현한 예제가 아니다. **정상 AES-GCM API를 어떤 입력·문맥으로 호출했는지**가 보안 성질을 바꾼다는 예제다.
+
+#### `nonce_reuse.py`: `[:-16]`을 자르는 이유
+
+`AESGCM.encrypt()`의 반환은 `C || tag`다. 아래 두 줄은 tag가 아니라 counter-mode ciphertext C 부분만 꺼낸다.
+
+```python
+known_ct = AESGCM(key).encrypt(reused_nonce, known, None)[:-16]
+secret_ct = AESGCM(key).encrypt(reused_nonce, secret, None)[:-16]
+```
+
+두 암호화의 K와 N이 같으므로 첫 block의 mask S도 같다.
+
+```text
+known_ct  = known  XOR S
+secret_ct = secret XOR S
+
+known_ct XOR secret_ct XOR known
+  = (known XOR S) XOR (secret XOR S) XOR known
+  = secret
+```
+
+`xor()`는 두 입력 길이 중 짧은 쪽까지만 처리한다. 이 파일의 두 plaintext는 모두 18바이트라서 전체를 복원한다. 길이가 다르면 짧은 공통 prefix까지만 이 단순 식으로 복원된다. `reused_nonce = b"\x00" * 12`는 zero nonce가 본질적으로 나빠서가 아니라 **같은 key 아래 두 번 사용했기 때문에** 일부러 위험하다.
+
+```python
+# book-check: nonce_reuse
+import runpy
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+lab = runpy.run_path("02_symmetric/nonce_reuse.py")
+key, nonce = bytes(range(32)), bytes(12)  # 공개 fixture; 운영에서 재사용 금지
+known, secret = b"pay bob   1000 USD", b"pay alice 9000 USD"
+known_c = AESGCM(key).encrypt(nonce, known, None)[:-16]
+secret_c = AESGCM(key).encrypt(nonce, secret, None)[:-16]
+assert lab["xor"](lab["xor"](known_c, secret_c), known) == secret
+assert len(known_c) == len(known) == len(secret)
+```
+
+이 파일은 tag forgery를 구현하지 않는다. GCM nonce reuse는 기밀성 노출뿐 아니라 인증 안전성에도 영향을 주지만, 여기서 관찰하는 직접 결과는 **알고 있는 plaintext 하나로 다른 plaintext를 복구**하는 것이다.
+
+#### `aad_swap_demo.py`: AAD를 누가 결정하는가
+
+`encrypt(aes, plaintext, aad)`는 호출마다 `secrets.token_bytes(12)`로 nonce를 생성하고 `(nonce, C||tag)`를 반환한다. nonce를 반환하는 이유는 나중에 같은 nonce를 수신자가 입력해야 하기 때문이다. AAD는 반환하지 않는다. AAD는 현재 DB row 또는 요청에서 **수신자가 기대하는 값**으로 다시 제공해야 한다.
+
+`WITHOUT AAD`에서 Bob의 `(nonce, C||tag)`는 `aad=None` 아래 정상값이다. 이를 Alice row에서 `aad=None`로 복호화해도 GCM은 “이것이 Alice row여야 한다”는 사실을 알지 못하므로 Bob의 plaintext를 반환한다.
+
+`WITH AAD`에서는 암호화 때 Bob의 ID `b"user:bob"`가 tag에 포함된다. Alice row를 읽는 쪽은 `b"user:alice"`를 기대 AAD로 넣으므로 둘이 불일치하고 `InvalidTag`가 난다. `try/except`는 그 실패를 정상적인 학습 출력으로 바꾼다. 예외를 잡았다는 것은 ciphertext를 성공적으로 읽었다는 뜻이 아니다.
+
+```python
+# book-check: aad
+import runpy
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+lab = runpy.run_path("02_symmetric/aad_swap_demo.py")
+aes = AESGCM(bytes(range(32)))
+nonce, encrypted = lab["encrypt"](aes, lab["BOB_SECRET"], lab["BOB_ID"])
+assert aes.decrypt(nonce, encrypted, lab["BOB_ID"]) == lab["BOB_SECRET"]
+try:
+    aes.decrypt(nonce, encrypted, lab["ALICE_ID"])
+except InvalidTag:
+    pass
+else:
+    raise AssertionError("record identity swap must fail")
+```
+
+이 보장은 앱이 Alice identity를 독립적으로 알고 `ALICE_ID`를 만들어 줄 때만 성립한다. DB의 `aad` 컬럼을 공격자가 바꾼 뒤 그 값을 그대로 decrypt에 넘기면 [A.5의 답](#exercises)처럼 바꿔치기를 검출하지 못할 수 있다. AAD는 “문자열을 한 개 추가하면 안전”이 아니라 **신뢰한 문맥을 tag에 묶는 입력**이다.
+
+<a id="trace-database"></a>
+
+### D.8 `db_encryption_demo.py`: key를 읽고, row identity에 묶고, bytes를 저장한다
+
+코드: [`02_symmetric/db_encryption_demo.py`](02_symmetric/db_encryption_demo.py).
+
+이 파일은 8장의 “앱이 외부에서 key를 얻고 DB에는 암호문을 둔다”는 구조를 SQLite로 축소한 것이다. `APP_DATA_KEY_B64`는 Secret Manager 자체가 아니다. Secret Manager가 앱의 환경에 전달했다고 **가정한 한 전달 경로**다.
+
+#### CLI부터 저장까지의 호출 그래프
+
+```text
+generate-key
+  main → generate_key_text → AESGCM.generate_key(256 bit)
+       → URL-safe Base64 텍스트 출력
+
+store
+  main → load_key_from_environment → Base64 decode → raw 32-byte K
+       → connect → CREATE TABLE IF NOT EXISTS
+       → getpass 입력을 UTF-8 bytes P로 변환
+       → store_secret(connection, K, P)
+            → random UUID record_id, key_version=1, random 12-byte N
+            → associated_data(record_id, 1)
+            → AESGCM(K).encrypt(N, P, AAD) = C || tag
+            → INSERT(id, version, N, C||tag), commit
+
+read
+  main → 같은 K load → retrieve_secret
+       → SELECT row → 같은 associated_data 재구성
+       → AESGCM(K).decrypt(N, C||tag, AAD) → P
+```
+
+`generate_key_text()`의 Base64는 key를 텍스트 환경변수로 운반하기 위한 encoding이다. `load_key_from_environment()`는 존재 여부, Base64 형식, decode된 길이 32를 차례로 검사한다. 첫 두 실패는 우리가 만든 입력 검증 오류이고, 실제 GCM tag 검증은 그 이후 `read`에서 일어난다.
+
+#### `associated_data()`가 row 자체를 묶는 방식
+
+```python
+def associated_data(record_id, key_version):
+    return f"encrypted_secrets:{record_id}:v{key_version}".encode("ascii")
+```
+
+UUID는 ASCII hex·hyphen 문자만 포함하므로 `.encode("ascii")`가 가능하다. `record_id`와 `key_version`은 DB에 별도 컬럼으로도 저장되고, 동일한 값의 bytes가 tag 입력으로도 들어간다. `encrypted_value` 안에 AAD가 자동 저장되는 것은 아니다. read path가 row의 ID/version으로 **정확히 같은 bytes를 재구성**한다.
+
+`store_secret()`이 만든 `record_id`는 암호화 전에 정해진다. 따라서 그것을 AAD에 안전하게 넣을 수 있다. `key_version=1`은 현재 예제에서 상수다. 진짜 rotation 구현이라면 version으로 올바른 key를 선택하고, 이전 version 데이터도 읽는 정책을 추가해야 한다. 현재 함수는 version을 AAD에 넣기는 하지만 여러 key를 관리하지는 않는다.
+
+```python
+# book-check: database
+import runpy
+from pathlib import Path
+from tempfile import TemporaryDirectory
+lab = runpy.run_path("02_symmetric/db_encryption_demo.py")
+key = bytes(range(32))
+assert lab["associated_data"]("record-1", 7) == b"encrypted_secrets:record-1:v7"
+with TemporaryDirectory() as directory:
+    path = Path(directory) / "practice.sqlite3"
+    with lab["connect"](path) as connection:
+        record_id = lab["store_secret"](connection, key, b"api-token")
+        row = connection.execute(
+            "SELECT id, key_version, nonce, encrypted_value FROM encrypted_secrets"
+        ).fetchone()
+        assert row["id"] == record_id and len(row["nonce"]) == 12
+        assert b"api-token" not in row["encrypted_value"]
+        assert lab["retrieve_secret"](connection, key, record_id) == b"api-token"
+```
+
+`connect()`의 `row_factory=sqlite3.Row` 덕분에 `row["nonce"]`처럼 column 이름으로 bytes를 꺼낼 수 있다. SQLite의 `BLOB`은 bytes를 보관하며, `inspect_rows()`의 `hex(...)`는 사람이 보기 위해 SQL에서 텍스트로 표현하는 것뿐이다. `inspect`도 지금은 공통 흐름 때문에 key 환경변수를 요구하지만, `SELECT hex(...)` 자체가 key를 필요로 하지는 않는다.
+
+**실패 지점:** 존재하지 않는 id는 `KeyError`, 틀린 key·nonce·AAD·암호문은 `InvalidTag`를 일으킨다. CLI는 뒤의 경우를 하나의 `Decryption failed` 메시지로 묶는다. 원인을 세분해 공개하면 공격자에게 도움이 될 수 있기 때문이다. 반대로 DB가 완전히 과거 row로 rollback된 경우에는 그 과거 row의 tag가 정상이라 decrypt가 성공한다. 최신성은 별도 상태가 필요하다.
+
+<a id="trace-exchange"></a>
+
+### D.9 `x25519_exchange.py`: private object에서 shared secret, 그리고 AES key까지
+
+코드: [`03_asymmetric/x25519_exchange.py`](03_asymmetric/x25519_exchange.py).
+
+#### 전송 경계와 `public_bytes()`
+
+`X25519PrivateKey.generate()`가 Alice/Bob 각각의 private object를 만든다. `.public_key()`는 대응되는 public object를 만든다. `public_bytes()`는 그 public object를 Raw 32-byte encoding으로 바꾼다. 이 bytes가 네트워크나 메시지 포맷에 들어갈 수 있는 값이다. 실제 수신자는 `X25519PublicKey.from_public_bytes(...)`로 그 bytes를 public object로 복원한다. 이 짧은 파일은 object를 직접 상대에게 넘겨 더 읽기 쉽게 만들었고, D.10의 `key_roles_lab.py`는 byte 경계까지 보여 준다.
+
+```text
+Alice private object ── public_key() ──→ Alice public object ── public_bytes() ──→ wire
+Bob   private object ── public_key() ──→ Bob public object   ── public_bytes() ──→ wire
+```
+
+`alice_private.exchange(bob_public)`과 `bob_private.exchange(alice_public)`은 모두 32-byte shared secret을 반환하며 같아야 한다. 이 파일은 secret을 출력하지 않는다. equal 여부만 출력하는 것은 key material을 로그에 남기지 않는 습관을 보여 준다. [X25519 API](https://cryptography.io/en/stable/hazmat/primitives/asymmetric/x25519/)
+
+#### `derive_aes_key(shared_secret)`의 HKDF 인자
+
+```python
+HKDF(
+    algorithm=hashes.SHA256(),
+    length=32,
+    salt=None,
+    info=b"crypto-playground/x25519-session/v1",
+).derive(shared_secret)
+```
+
+`length=32`은 AES-256 key 길이다. `info`는 이 출력이 이 학습 프로토콜의 session AES key라는 문맥을 붙인다. `salt=None`은 이 API에서 SHA-256 digest 길이만큼의 zero bytes salt를 쓰는 것과 같다. 이는 최소 예제의 결정된 선택이며, 모든 key agreement 프로토콜에 그대로 복사할 설정은 아니다. TLS는 transcript와 여러 단계의 secret을 더 정교하게 HKDF에 결합한다.
+
+이 파일은 양 방향에 하나의 `derive_aes_key` 결과를 쓰므로 Alice→Bob과 Bob→Alice의 traffic key를 분리하지 않는다. 한 방향 메시지만 보여 주는 **최소 key-agreement 실습**이다. 실제 protocol은 role/direction을 `info`에 넣거나 TLS처럼 별도 traffic secret을 파생한다.
+
+```python
+# book-check: x25519
+import runpy
+lab = runpy.run_path("03_asymmetric/x25519_exchange.py")
+shared = bytes(range(32))  # 공개 fixture; 실제 DH 출력이 아님
+assert lab["derive_aes_key"](shared).hex() == "4c4938acbb758fefce61b4edac0cbb7d07d05106e709b5fc3ac6e11904ae60b7"
+alice = lab["x25519"].X25519PrivateKey.generate()
+bob = lab["x25519"].X25519PrivateKey.generate()
+a_wire = lab["public_bytes"](alice.public_key())
+b_wire = lab["public_bytes"](bob.public_key())
+alice_shared = alice.exchange(lab["x25519"].X25519PublicKey.from_public_bytes(b_wire))
+bob_shared = bob.exchange(lab["x25519"].X25519PublicKey.from_public_bytes(a_wire))
+assert len(a_wire) == len(b_wire) == len(alice_shared) == 32
+assert alice_shared == bob_shared
+assert lab["derive_aes_key"](alice_shared) == lab["derive_aes_key"](bob_shared)
+```
+
+`main()`의 마지막 네 줄은 이미 배운 AEAD 호출이다. Alice가 만든 random nonce, plaintext, AAD, `encrypted=C||tag`를 Bob이 자신의 같은 key로 decrypt한다. 여기서 **AES key는 wire로 보낸 적이 없다.** 하지만 public bytes를 Mallory가 바꿔치기할 수 있으므로, 이 파일만으로 peer identity는 인증하지 못한다. 이것이 certificate/서명과 TLS가 필요해지는 정확한 지점이다.
+
+<a id="trace-roles"></a>
+
+### D.10 `key_roles_lab.py`: 작은 수의 반례와 실제 API를 분리하기
+
+코드: [`03_asymmetric/key_roles_lab.py`](03_asymmetric/key_roles_lab.py).
+
+이 파일은 한 함수가 아니라 역할이 다른 다섯 실습을 한 CLI에 모았다. `main()`의 `demos` dictionary는 문자열 subcommand를 함수에 연결한다. `python3 ... dh`는 `toy_dh`, `signature`는 `signature_demo`를 호출한다. dh/mitm/rsa를 선택한 경우에만 “TOY ARITHMETIC ONLY” 경고를 출력한다.
+
+| 함수 | 직접 계산하는 것 | 의도적으로 보여 주는 한계 |
+|---|---|---|
+| `toy_dh()` | `pow(g, a, p)`와 shared secret | p=23이면 `next(...)` 전수조사로 a를 찾음 |
+| `toy_mitm()` | Mallory가 자기 public M을 양쪽에 제시 | Mallory는 a/b를 풀지 않고도 서로 다른 두 secret을 만듦 |
+| `toy_rsa()` | `pow(e, -1, phi)`, `pow(m,e,n)` | OAEP 없는 textbook RSA는 배포용 암호가 아님 |
+| `x25519_demo()` | public bytes 복원, `exchange`, 방향별 HKDF | `peer identity authenticated: False` |
+| `signature_demo()` | private `sign`, public `verify` | public key의 소유자 신원은 별도 문제 |
+
+`toy_dh()`의 `next(i for i in range(1,p) ...)`는 public A가 나오는 첫 exponent 후보를 찾는다. p=23이라 이 공격 코드가 종료한다. 같은 형태를 실제 X25519 private key에 적용할 수 없다는 것이 정확히 파라미터 크기와 군 선택의 의미다.
+
+`x25519_demo()`는 D.9보다 한 단계 더 실제 wire 경계를 흉내 낸다. `a_wire`와 `b_wire`를 `from_public_bytes()`로 다시 object로 만들고, `derive(shared, b"A-to-B/key")`와 `derive(shared, b"B-to-A/key")`로 방향 key를 분리한다. 코드 안의 salt `b"crypto-pg/key-roles/v1"`은 암호문과 함께 보관하지 않아도 양쪽이 미리 알고 있는 protocol 상수다. `AESGCM(alice_send)`와 `AESGCM(bob_receive)`의 key가 같으므로 Bob이 읽을 수 있다.
+
+`signature_valid()`가 `InvalidSignature`만 잡고 False를 반환하는 이유는 실패한 서명이 이 실습에서 예상되는 결과이기 때문이다. private `sign()`은 exception 없이 bytes signature를 만들고, public `verify()`는 정상일 때도 값을 반환하지 않는다(`None`). 그래서 wrapper가 boolean으로 바꾼다.
+
+```python
+# book-check: roles
+import runpy
+lab = runpy.run_path("03_asymmetric/key_roles_lab.py")
+assert lab["toy_dh"]()["Alice shared"] == lab["toy_dh"]()["Bob shared"] == 2
+mitm = lab["toy_mitm"]()
+assert mitm["Alice shared with fake Bob"] == mitm["Mallory shared with Alice"] == 12
+assert mitm["Bob shared with fake Alice"] == mitm["Mallory shared with Bob"] == 15
+assert lab["toy_rsa"]()["decrypted"] == 65
+assert lab["signature_demo"]() == {
+    "valid message": True, "changed message": False, "wrong public key": False,
+}
+```
+
+**코드 독해 질문:** `signature_demo()`의 `stranger_public`이 message를 읽을 수 없는가? 아니다. message는 공개 입력일 수 있다. 그 public key가 서명을 검증하지 못하는 이유는 signature가 다른 private key에서 만들어졌기 때문이다.
+
+<a id="trace-tls"></a>
+
+### D.11 `tls_memory_lab.py`: 임시 PKI와 TLS state machine을 메모리에서 연결하기
+
+코드: [`04_tls/tls_memory_lab.py`](04_tls/tls_memory_lab.py).
+
+이 파일은 TLS를 Python으로 재구현하지 않는다. OpenSSL을 사용하는 Python `ssl`의 실제 TLS state machine에 certificate, private key, input/output byte buffer를 제공한다. 우리가 쓰는 코드는 **환경과 transport를 조립하는 코드**다.
+
+#### `temporary_pki()`: CA와 서버는 다른 private key를 쓴다
+
+함수 시작의 두 `rsa.generate_private_key(...)`는 `ca_key`와 `server_key`를 별도로 생성한다. 내부 `builder(...)`는 subject, issuer, public key, serial, validity만 공통으로 만든다.
+
+```text
+ca_cert:
+  subject = issuer = temporary CA
+  public  = ca_key.public
+  sign(ca_key)                 ← self-signed CA certificate
+
+server_cert:
+  subject = localhost
+  issuer  = temporary CA
+  public  = server_key.public
+  SAN     = DNS:localhost
+  sign(ca_key)                 ← CA가 서버 public key/name binding에 서명
+```
+
+서버는 나중에 `server.key`로 TLS `CertificateVerify`에 참여한다. CA private key가 TLS 연결에서 서버 대신 서명하는 것이 아니다. `BasicConstraints`, `KeyUsage`, `ExtendedKeyUsage`, SAN은 각각 CA 여부, key 사용 제한, server-auth 목적, 기대 hostname을 표현한다.
+
+`TemporaryDirectory` 안에 certificate PEM과 private-key PEM을 쓰고 `yield`한다. context를 벗어나면 directory가 제거된다. `key_path.touch(mode=0o600)`은 key file 권한을 추가 제한한다. 이 함수는 OS trust store에 아무 root도 설치하지 않는다. 따라서 다음 함수의 client가 CA PEM을 명시적으로 신뢰해야 한다.
+
+#### `run_connection(...)`: network socket 대신 두 쌍의 MemoryBIO
+
+`SSLContext(PROTOCOL_TLS_SERVER)`와 `SSLContext(PROTOCOL_TLS_CLIENT)`는 서버/클라이언트 보안 기본값을 다르게 구성한다. 양쪽의 minimum/maximum version을 TLS 1.3으로 맞춰 학습 범위를 고정한다. client context에는 default OS root를 추가로 로드하지 않고, `trusted=True`일 때에만 이 임시 CA PEM을 넣는다. `server_ctx.num_tickets=0`은 post-handshake resumption ticket을 없애 첫 handshake에 집중한다.
+
+```text
+client SSLObject ─ client_out → client_out bytes → server_in ─ server SSLObject
+server SSLObject ─ server_out → server_out bytes → client_in ─ client SSLObject
+```
+
+`wrap_bio`가 만든 SSLObject는 `do_handshake()`를 호출할 때 보내야 할 TLS bytes를 `*_out`에 쓴다. `transfer(source,destination)`가 bytes를 읽어 반대편 `*_in`에 넣는다. 아직 상대 bytes가 부족하면 `SSLWantReadError`가 난다. 이는 certificate 검증 실패가 아니라 “다음 network bytes를 기다리는 정상 상태”다. loop가 두 handshake가 끝날 때까지 byte를 왕복시키는 이유다.
+
+handshake 뒤에는 다음 세 줄이 핵심이다.
+
+```python
+client.write(request)                  # plaintext HTTP bytes를 TLS에 입력
+wire = transfer(client_out, server_in) # TLS ciphertext record bytes를 관찰
+received = server.read(16384)          # TLS가 검증·복호화한 plaintext를 앱에 반환
+```
+
+`wire`에 request 전체 byte열이 없다는 것은 앱이 준 plaintext와 transport가 보낸 bytes가 다름을 관찰하는 좋은 실습이다. 하지만 단일 문자열 검색은 TLS의 보안 증명이 아니다. TLS record metadata와 길이는 여전히 보일 수 있다.
+
+```python
+# book-check: tls
+import runpy
+import ssl
+lab = runpy.run_path("04_tls/tls_memory_lab.py")
+with lab["temporary_pki"]() as pki:
+    result = lab["run_connection"](*pki)
+    assert result["version"] == "TLSv1.3"
+    assert result["received"] == result["request"]
+    assert result["request"] not in result["wire"]
+    try:
+        lab["run_connection"](*pki, hostname="wrong.example")
+    except ssl.SSLCertVerificationError:
+        pass
+    else:
+        raise AssertionError("hostname mismatch must fail")
+```
+
+`trusted=False`면 client가 issuer CA를 trust store에 갖지 않으므로 같은 hostname이어도 실패한다. 반대로 hostname만 맞추고 `check_hostname=False`나 `verify_mode=CERT_NONE`으로 바꾸는 것은 실습의 해결책이 아니라 바로 제거하려는 검증을 없애는 것이다. 이 코드가 실제 인터넷 서버·DNS·load balancer·renewal을 다루지 않는 이유도 12장과 13장의 운영 경계를 다시 읽어야 한다.
+
+### D.12 실습 출력을 볼 때 마지막으로 묻는 다섯 가지
+
+어떤 예제를 다시 실행하든 아래 다섯 질문을 먼저 적어 보자.
+
+1. 이 함수의 **비밀 입력**은 무엇이고, 코드의 어느 변수인가?
+2. 외부로 전달하거나 DB에 저장하는 **공개 입력/출력**은 무엇인가?
+3. 같은 결과를 재현하려는 쪽은 어떤 값을 이미 갖고, 무엇을 수신하는가?
+4. 잘못된 값을 넣으면 어떤 함수가 어떤 예외 또는 False를 내는가?
+5. 그 실패 검출이 막지 못하는 공격은 무엇인가? (replay, rollback, peer identity, 앱 RCE 등)
+
+이 다섯 답이 코드 변수명과 함께 나와야 “출력이 통과했다”를 넘어 실제로 함수를 읽은 것이다.

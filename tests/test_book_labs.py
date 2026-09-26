@@ -185,7 +185,9 @@ def test_book_local_links_and_fences():
         else:
             table_width = None
     assert not in_fence
-    for target in re.findall(r"\]\(([^)]+)\)", book):
+    # Match Markdown links, not Python indexing such as lab["sha256"](...)
+    # in the executable book fixtures.
+    for target in re.findall(r"(?<![\w\"'])\[[^\]\n]+\]\(([^)\n]+)\)", book):
         if target.startswith("#"):
             assert target[1:] in anchors, target
         elif not target.startswith(("https://", "http://")):

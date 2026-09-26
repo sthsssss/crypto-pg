@@ -19,6 +19,10 @@ DH·X25519·HKDF·서명·RSA → 인증서 → TLS/HTTPS입니다.
 해설, 용어 찾아보기가 있습니다. [개정 검토 기록](docs/BOOK_REVIEW.md)에서 기존
 설명의 공백과 수정 범위를 확인할 수 있습니다.
 
+3판에는 책 끝의 **함수별 실행 추적**을 추가했습니다. 실행했던 SHA-256, scrypt,
+HMAC, AES-GCM, nonce/AAD 실패 실습, SQLite 저장, X25519/HKDF, 서명, TLS 함수가
+받는 bytes·만드는 중간값·저장/전송 경계·실패 지점을 코드와 함께 따라갑니다.
+
 ### Setup (Python 3.10+)
 
 ```bash

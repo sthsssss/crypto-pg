@@ -1,6 +1,6 @@
 # Crypto Book 개정 검토
 
-대상: `CRYPTOGRAPHY_BOTTOM_UP.md` · 2판 · 2026-09-25
+대상: `CRYPTOGRAPHY_BOTTOM_UP.md` · 3판 · 2026-09-26
 
 ## 독자와 편집 원칙
 
@@ -31,6 +31,7 @@ Applied Cryptography의 저자 공개 자료·구성을 참고했다. 참고한 
 | TLS에 새 용어가 갑자기 등장 | 12장: transcript, Finished, traffic key, record nonce, suite 이름 |
 | TLS application key 도출 시점/QUIC 층위가 뭉뚱그려짐 | server Finished 기준 도출, client Finished의 key, QUIC record 차이 명시 |
 | 학습 종료 기준과 복습 도구 부족 | 실습별 예상 결과/비보장, 확인 문제 12개와 해설, 용어 찾아보기 |
+| 개념 설명과 실행했던 함수 호출 사이의 단절 | 3판 부록 D: 모든 실습의 입력→지역 변수→API→저장/전송→실패 추적과 실행 검산 |
 
 ## 문서와 함께 수정한 코드
 
