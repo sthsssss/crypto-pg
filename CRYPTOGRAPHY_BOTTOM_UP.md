@@ -3,17 +3,57 @@
 > 대상: 애플리케이션 개발 경험은 있지만 암호학 용어가 아직 하나의 그림으로 연결되지 않은 개발자
 >
 > 목표: `해시 → 비밀번호 저장 → HMAC → AES-GCM → 키 관리 → 비대칭키 → 인증서 → TLS/HTTPS`를 바텀업으로 연결한다.
-> 개정판: 3 · 기준일: 2026-09-26 · Python 3.10 이상
+> 개정판: 5 · 기준일: 2026-09-27 · Python 3.10 이상
+
+암호학을 처음 공부하면 함수 이름은 빠르게 늘어난다. SHA-256, Argon2id, HMAC, AES-GCM, X25519, HKDF, 인증서, TLS. 각각의 정의를 읽을 때는 이해한 것 같은데, 막상 서버 한 대를 설계하려 하면 key가 어디에서 생기고 누가 갖는지, nonce를 왜 저장하는지, 인증서와 AES가 한 연결 안에서 어떻게 만나는지 다시 흐려진다. 이 책은 그 흐려지는 지점을 출발점으로 삼는다.
+
+끝까지 따라갈 대상은 `shop.example`이라는 작은 서비스다. 사용자는 브라우저에서 로그인하고, 외부 서비스의 API token을 맡긴다. 애플리케이션은 그 token을 DB에 보관했다가 worker가 필요할 때 복원해 외부 API를 호출한다. 이 평범한 요구에는 이미 여러 문제가 겹쳐 있다.
+
+```text
+사용자 password를 서버가 어떻게 검증할 것인가?
+브라우저가 보낸 token을 네트워크에서 누가 읽거나 바꾸지 못하게 하려면?
+DB가 유출되어도 token 원문을 감추려면?
+암호화 key를 DB와 분리한다는 것은 실제로 어디에 둔다는 뜻인가?
+처음 만난 브라우저와 서버는 공유 key 없이 어떻게 안전한 연결을 시작하는가?
+브라우저가 받은 public key가 정말 shop.example의 것임을 어떻게 아는가?
+```
+
+각 장은 이 질문 중 하나를 해결한다. 그리고 해결할 때마다 아직 남은 문제를 일부러 드러낸다. SHA-256은 데이터 지문을 만들지만 송신자를 인증하지 못한다. HMAC은 변조를 검출하지만 내용을 숨기지 않는다. AES-GCM은 숨기고 변조를 거부하지만 양쪽이 이미 같은 key를 가져야 한다. X25519는 shared secret을 만들지만 상대의 신원을 알려 주지 않는다. 인증서는 public key를 이름에 연결하고, TLS는 이 부품들을 실제 네트워크 순서로 조립한다.
+
+그러므로 이 책에서 가장 중요한 질문은 “이 알고리즘의 내부 라운드는 무엇인가?”가 아니다. 먼저 다음 다섯 가지를 추적한다.
+
+```text
+누가 어떤 값을 갖는가?
+어떤 bytes가 함수에 들어가는가?
+무엇이 출력되고 어디로 이동하는가?
+그 결과 공격자가 무엇을 못 하게 되는가?
+그래도 아직 무엇은 막지 못하는가?
+```
+
+이 다섯 질문이 보이면 수식은 역할을 설명하는 도구가 된다. 보이지 않으면 수식은 암기할 기호가 된다. 첫 독서에서는 역할과 경계를 먼저 세우고, 알고리즘 내부는 필요할 때 선택 심화로 돌아온다.
 
 이 책은 프로그래밍을 처음 배우는 사람을 위한 책이 아니다. 함수, 바이트 배열, DB transaction, HTTP는 알고 있지만 암호학의 수학적 전제와 protocol의 연결을 처음 구축하는 개발자를 위한 책이다. 전문 용어를 생략하지 않고, 그 용어가 가리키는 **입력·출력·소유자·보안 성질**을 설명한다.
-
-읽는 동안 `shop.example`이라는 가상 서비스가 사용자의 외부 API token을 보관하는 상황을 계속 떠올리자. 브라우저는 token을 서버로 보내고, 서버는 DB에 저장하고, worker는 나중에 복원해 사용한다. 이 한 사례에서 저장 암호화와 전송 암호화가 모두 필요해진다.
 
 ### 이 책을 읽는 방법
 
 각 개념은 **문제 → 정의 → 작은 계산 → 공격자의 관점 → 실제 API → 확인 문제** 순서로 읽는다. 수학적 계산이 맞다는 것과 실무에 안전하다는 것은 다른 판단이다. 작은 수를 쓰는 DH·RSA 예제는 계산의 구조만 보여 주며, 실제 보안 파라미터는 라이브러리에 맡긴다.
 
-처음 읽을 때는 0~7장으로 이미 실습한 개념을 연결하고, 8~9장에서 저장 아키텍처를 본 뒤, 10장을 충분히 나누어 읽자. 10장의 목표는 `exchange()`가 True를 출력하는 것을 관찰하는 데서 끝나지 않고 그 계산을 손으로 재현하는 것이다. 11~14장이 이를 HTTPS로 연결한다.
+이 책의 모든 문장을 첫 독서에서 이해할 필요는 없다. 각 장은 다음 세 층으로 읽는다.
+
+```text
+1. 핵심 정신 모델
+   누가 어떤 값을 가지고, 무엇을 입력해, 어떤 출력을 얻는가?
+
+2. 실습과 통과 기준
+   정상 동작과 실패를 실행해 보고 핵심 문장을 내 말로 설명할 수 있는가?
+
+3. 선택 심화
+   round, padding, counter, 유한체 연산과 공격의 정확한 성립 과정을 추적한다.
+```
+
+첫 독서에서는 **핵심 정신 모델과 통과 기준만 읽고 다음 장으로 이동해도 된다.** `선택 심화`는 앞 장을 통과하기 위한 시험 범위가 아니다. 실습 결과를 이해하지 못했거나 특정 내부 원리가 궁금해졌을 때 돌아오는 참고 절이다. 기술 용어를 숨기지는 않되, 용어의 내부 구현까지 한 번에 이해해야 한다고 요구하지 않는다.
+
+처음 읽을 때는 0~7장에서 각 primitive의 역할과 실패 조건을 연결하고, 8~9장에서 저장 아키텍처를 본 뒤, 10~12장에서 이를 HTTPS로 조립한다. 첫 독서의 10장 목표는 `exchange()`의 두 결과가 왜 같은 용도의 secret인지와 private/public의 소유 경계를 설명하는 것이다. 작은 수의 DH·타원곡선·RSA 손계산은 두 번째 독서에서 재현한다.
 
 ### 목차와 독서 경로
 
@@ -25,22 +65,66 @@
 | 저장과 키 운영 | DB, 프로세스, KMS에는 각각 무엇이 있는가? | [8장](#storage), [9장](#lifecycle) |
 | 비대칭 암호 | 다른 private key로 왜 같은 비밀이 계산되는가? | [10장](#asymmetric) |
 | 신뢰와 통신 | 공개키가 누구 것인지 어떻게 알고 HTTPS로 연결하는가? | [11장](#certificates), [12장](#tls), 13~14장 |
+| 로그인 상태와 토큰 | 로그인 결과를 이후 API 요청에서 어떻게 증명하는가? | [12.10절](#tokens) |
 | 연습과 복습 | 내 말로 설명하고 실험으로 반증할 수 있는가? | [18장](#labs), [연습문제·해설](#exercises), [용어 찾아보기](#glossary) |
 | 실습 코드 독해 | 내가 실행한 함수에서 실제로 어떤 값이 변하는가? | [부록 D: 함수별 실행 추적](#function-walkthrough) |
 
-### 교재의 전개에서 참고한 점
+#### 처음 한 번만 읽을 때의 빠른 경로
 
-“최고의 책”을 객관적으로 순위 매기기보다, 저자들이 공개한 구성과 교육 자료에서 이 독자에게 유용한 방식을 골랐다.
+아래 경로는 이 책의 축약본이다. 선택 심화를 건너뛰어도 이후 장의 핵심 설명이 이어지도록 구성한다.
 
-- Mike Rosulek의 [The Joy of Cryptography](https://joyofcryptography.com/)는 one-time pad와 security definition에서 시작해 pseudorandomness, 대칭 암호, 비대칭 암호로 확장한다. 여기서는 **공격자가 무엇을 구별할 수 있는가**라는 질문을 도입하는 데 참고했다.
-- Paar·Pelzl·Güneysu의 [Understanding Cryptography](https://www.cryptography-textbook.com/)는 기초 원리와 실제 응용을 예제·문제·추가 읽기로 연결한다. 여기서는 **손계산 → 구현 → 확인 문제**라는 학습 단위를 참고했다.
-- Boneh·Shoup의 [A Graduate Course in Applied Cryptography](https://toc.cryptobook.us/)는 secret-key, public-key, protocol을 구분해 발전시킨다. 여기서는 **primitive의 보안과 protocol 전체의 보안을 구별**하는 데 참고했다.
+| 장 | 첫 독서에서 읽을 부분 | 처음에는 건너뛸 부분 |
+|---|---|---|
+| 0~3 | 전체 | 없음 |
+| 4 | 장 도입, 4.2, 실습 | 4.1 SHA-256 round |
+| 5 | 가입·로그인 흐름, 5.1~5.3 | scrypt `N/r/p` 계산 |
+| 6 | 장 도입, 6.2, 실습 | 6.1 length extension과 HMAC 내부 수식 |
+| 7 | 7.1, 7.2, 7.6, 실습 | 7.3~7.5 AES/GHASH 내부 |
+| 8~9 | 8.1~8.3, 8.7~9.7 | 8.4 envelope encryption의 상세 pseudocode는 두 번째 독서 |
+| 10 | 장 도입, X25519 라이브러리 흐름, 10.4~10.6, 10.8 | 10.1~10.2와 10.3 앞부분의 수학, 10.7 RSA 산술 |
+| 11 | 전체 | 인증서 세부 필드는 암기하지 않음 |
+| 12 | 12.1, 12.2, 12.9, 12.11 | 12.3~12.8 handshake 내부는 두 번째 독서 |
+| token | 12.10.1~12.10.5, 12.10.9~12.10.13 | 12.10.6~12.10.8 JWT 서명·검증 상세 |
 
-책들의 본문을 번역하거나 발췌한 자료는 아니다. 아래 설명, 계산 예제, 서비스 시나리오, 문제는 이 학습 세션을 위해 새로 구성했다. 표준과 제품 동작의 근거는 해당 절에 직접 연결한다.
+첫 독서의 목표는 모든 수식을 재현하는 것이 아니라 **각 값의 소유자, 입력, 출력, 보장, 실패 조건**을 말할 수 있게 되는 것이다.
+
+### 독자의 머릿속에서 바뀌어야 하는 그림
+
+이 책의 장들은 용어를 하나씩 추가하는 목록이 아니다. 앞 장에서 만든 멘탈모델이 다음 장에서 조금씩 수정되는 과정이다.
+
+```text
+0~3장   암호화 = 어려운 함수
+          ↓
+        각 값에는 역할·소유자·공개 규칙이 있다
+
+4~7장   digest나 ciphertext 하나가 데이터를 지켜 준다
+          ↓
+        지문·비밀번호 검증·메시지 인증·인증 암호는 서로 다른 문제다
+
+8~9장   강한 알고리즘과 key 하나를 고르면 끝난다
+          ↓
+        key의 위치·권한·버전·수명주기가 시스템 보안의 절반이다
+
+10~12장 public key로 암호화하면 HTTPS가 된다
+          ↓
+        key agreement, signature, certificate, HKDF, AEAD가 각자 한 역할을 맡는다
+
+13~19장 HTTPS와 DB 암호화를 켜면 서비스 전체가 안전하다
+          ↓
+        데이터가 지나는 모든 신뢰 경계와 남은 공격을 끝까지 추적해야 한다
+```
+
+따라서 어느 장에서 막히면 새 용어를 더 외우지 말고, 그 장을 읽기 전과 후에 **누가 무엇을 갖는 그림이 어떻게 달라졌는지** 확인한다. 이 변화가 보이면 다음 장으로 갈 준비가 된 것이다.
+
+# 제1부. 암호를 읽기 위한 언어
+
+첫 번째 부에서는 아직 데이터를 암호화하지 않는다. 대신 이후의 모든 설명을 읽을 공통 언어를 만든다. `bytes`, key, nonce, tag 같은 단어를 정확히 구분하고, 한 알고리즘이 무엇을 보장하며 무엇은 보장하지 않는지 묻는 습관을 세운다.
 
 <a id="foundations"></a>
 
 ## 0. 기초 언어 — 정확히 무엇을 계산하고 무엇을 보장하는가
+
+**이 장에서 반드시 이해할 것:** 암호 함수는 문자열이 아니라 bytes를 처리하며, “정상적으로 복호화된다”와 “공격자에게 안전하다”는 서로 다른 주장이다. 알고리즘은 공개되어 있고 비밀로 보호하는 것은 key다. 기밀성·무결성·인증·인가는 서로 바꿔 쓸 수 없는 보안 성질이다.
 
 ### 0.1 Plaintext도 key도 결국 바이트다
 
@@ -127,9 +211,13 @@ CSPRNG는 cryptographically secure pseudorandom number generator다. OS에서 �
 
 암호 알고리즘은 이 질문에 답한 뒤 선택하는 부품이다. AES-GCM을 쓴다는 사실만으로 시스템이 안전해지는 것은 아니다. AES key가 DB와 같은 백업에 들어 있거나, 애플리케이션 서버가 장악되어 key와 plaintext가 모두 노출된다면 알고리즘은 정상적으로 작동하면서도 시스템은 침해된다.
 
+> **0장 통과 기준:** 문자열과 bytes의 차이, correctness와 security의 차이, confidentiality/integrity/authentication/authorization의 차이, 공개 알고리즘에서 무엇을 비밀로 두는지 설명할 수 있으면 1장으로 이동한다. 엔트로피의 수학적 정의를 전개할 필요는 없다.
+
 ---
 
 ## 1. 먼저 전체 지도를 보자
+
+0장에서 우리는 암호 함수를 “이름”이 아니라 입력·출력·보안 성질로 읽는 언어를 만들었다. 이제 앞으로 만날 도구를 한 장의 지도에 놓아 보자. 이 표를 처음부터 외울 필요는 없다. 다음 장들을 읽다가 현재 위치를 잃었을 때 돌아오는 지도다.
 
 암호학 부품들은 해결하는 문제가 서로 다르다.
 
@@ -165,9 +253,13 @@ CA가 서명한 인증서 ──→ public key가 특정 도메인의 것임을 
 TLS 위에 HTTP ──→ HTTPS
 ```
 
+이 지도에서 눈여겨볼 것은 각 화살표가 앞 도구의 부족한 점에서 시작한다는 사실이다. Password는 빠른 SHA-256이 아니라 password KDF로 검증하고, 공개 메시지의 출처를 확인하려면 HMAC이나 signature가 필요하며, 네트워크 통신에는 이 부품들을 순서 있게 조립한 TLS가 필요하다. 다음 장에서는 알고리즘보다 먼저, 우리가 보호할 데이터가 어느 순간에 노출되는지 살펴본다.
+
 ---
 
 ## 2. 데이터는 언제 위험한가
+
+같은 API token도 이동 중일 때, DB에 잠들어 있을 때, worker가 사용하려고 메모리에 꺼냈을 때의 공격자가 다르다. “암호화했는가?”라고 묻기 전에 “지금 데이터가 어느 상태에 있는가?”를 물어야 하는 이유다.
 
 현대 애플리케이션에서는 데이터를 세 상태로 나누는 것이 유용하다.
 
@@ -205,9 +297,13 @@ TLS 암호화: 네트워크 경로 보호
 애플리케이션 필드 암호화: DB dump 단독 유출 보호
 ```
 
+`shop.example`의 token은 브라우저에서 서버로 갈 때는 TLS의 보호를 받고, DB에 들어갈 때는 별도의 application key로 암호화될 수 있으며, 외부 API를 호출할 때는 다시 plaintext가 된다. 하나의 암호화가 세 상태를 모두 해결하지 않는다. 다음 장에서는 이 세 구간에서 반복해서 등장할 key·nonce·tag 같은 값에 정확한 이름을 붙인다.
+
 ---
 
 ## 3. 바이트와 이름부터 정확히 구분하기
+
+암호학 설명이 어려워지는 첫 번째 이유는 서로 다른 값을 모두 “암호키 같은 것”으로 부르는 데 있다. Key, salt, nonce, tag는 길이가 비슷하게 보일 수 있지만 비밀 여부도, 생성 시점도, 재사용 규칙도 다르다. 이제부터는 값의 이름을 보면 그 값의 직업을 떠올릴 수 있어야 한다.
 
 ### 3.1 key
 
@@ -271,11 +367,21 @@ raw bytes ── Base64 ──→ 문자열
 
 누구나 key 없이 되돌릴 수 있다.
 
+> **1~3장 통과 기준:** 보호하려는 데이터가 transit/rest/use 중 어디에 있는지 말할 수 있고, key·salt·nonce·tag·AAD의 소유자와 공개 가능 여부를 구분하며, Base64가 암호화가 아님을 설명할 수 있으면 4장으로 이동한다.
+
 ---
+
+# 제2부. 공개 함수에서 공유 비밀까지
+
+이제 실제 primitive를 하나씩 사용한다. 순서는 의도적이다. 먼저 비밀이 전혀 없는 SHA-256을 보고, 낮은 엔트로피의 password를 다루는 방법으로 이동한다. 그다음 shared key가 생기면 메시지의 출처를 확인할 수 있고, 마지막에는 같은 key로 내용까지 숨길 수 있음을 확인한다. 각 도구는 앞 도구의 빈자리를 메우지만, 다른 도구의 역할을 빼앗지는 않는다.
 
 <a id="hash"></a>
 
 ## 4. SHA-256: 비밀이 없는 데이터 지문
+
+이제 첫 번째 실제 primitive를 만난다. `shop.example`이 파일이나 설정값이 바뀌었는지 비교하려면 원문 전체 대신 짧고 고정된 지문을 만들고 싶을 수 있다. SHA-256은 이 일을 잘한다. 다만 지문을 만들 수 있다는 사실과 그 지문을 믿을 수 있다는 사실은 다르다.
+
+**이 장에서 반드시 이해할 것:** SHA-256은 key가 없는 공개 함수다. 같은 bytes에는 같은 digest를 만들지만, 공격자도 원하는 입력의 digest를 계산할 수 있다. 따라서 digest만으로 송신자나 데이터의 출처를 인증할 수는 없다.
 
 SHA-256은 임의 길이 입력을 32바이트 출력으로 바꾸는 공개 함수다.
 
@@ -312,7 +418,9 @@ SHA-256이 흔히 쓰이는 곳은 파일 지문, 콘텐츠 주소, 디지털 �
 
 코드와 연결: [D.1 — `sha256()`과 `differing_bits()`](#trace-hash).
 
-### 4.1 SHA-256 내부의 데이터 흐름
+> **첫 읽기 경로:** 여기까지 읽고 실습 출력에서 같은 입력/다른 입력의 digest를 비교한 다음 [4.2절](#sha-guessing)로 이동해도 된다. 바로 아래 SHA-256 round 설명은 선택 심화다.
+
+### 4.1 선택 심화: SHA-256 내부의 데이터 흐름
 
 SHA-256을 `hashlib` 호출 이상의 수준에서 이해하려면 **padding → block → state → round → digest**를 연결하면 된다.
 
@@ -363,7 +471,9 @@ assert hashlib.sha256(b"abc").hexdigest() == (
 )
 ```
 
-### 4.2 복호화가 없는데 비밀번호는 왜 알아낼 수 있는가
+<a id="sha-guessing"></a>
+
+### 4.2 다음 장으로 이어지는 핵심: 복호화가 없는데 비밀번호는 왜 알아낼 수 있는가
 
 두 가지 공격을 구별하자.
 
@@ -386,11 +496,29 @@ assert hashlib.sha256(b"abc").hexdigest() == (
 
 **확인 문제:** 다운로드 파일과 hash를 공격자가 모두 교체할 수 있는 웹페이지에서 받으면 왜 검증이 무의미한가? 신뢰한 별도 경로에서 hash를 받았다면 무엇이 달라지는가?
 
+SHA-256을 지나며 얻은 멘탈모델은 **digest는 데이터에서 계산한 공개 지문**이라는 것이다. 지문은 비교에는 유용하지만 신뢰의 출처를 스스로 만들지 못한다. 또한 입력 후보가 적으면 공격자가 후보마다 지문을 계산할 수 있다. 바로 이 성질 때문에 사용자 password를 빠른 SHA-256 하나로 저장해서는 안 된다.
+
+> **4장 통과 기준:** `SHA256(data)`에 secret key 인자가 없다는 것, 공격자가 message와 digest를 함께 바꿀 수 있다는 것, 비밀번호 후보를 hash해 비교하는 일은 복호화가 아니라 추측이라는 것을 설명할 수 있으면 5장으로 이동한다. Padding과 64라운드를 외울 필요는 없다.
+
 ---
 
 <a id="password"></a>
 
 ## 5. 비밀번호는 암호화하지 않고 검증한다
+
+4장에서 본 공격자는 digest를 거꾸로 푸는 대신 흔한 입력을 앞으로 계산했다. Password 저장은 바로 그 공격을 전제로 설계해야 한다. 서버가 해야 할 일은 password를 나중에 읽어 주는 것이 아니라, 사용자가 다시 제출한 후보가 등록 당시의 값과 같은지 판단하는 것이다.
+
+**이 장에서 반드시 이해할 것:** 서버는 password를 나중에 복구하려고 저장하지 않는다. 가입할 때 만든 verifier를 저장하고, 로그인 때 제출된 후보로 verifier를 다시 계산해 비교한다. verifier는 password 원문이 아니지만 DB가 유출되면 공격자가 후보를 대입해 볼 수 있으므로, 그 대입을 비싸게 만드는 password KDF가 필요하다.
+
+```text
+password KDF
+    password와 salt를 받아
+    의도적으로 시간·메모리를 사용해
+    비교용 verifier를 만드는 함수
+
+Argon2id, scrypt
+    password KDF의 구체적인 알고리즘
+```
 
 일반적인 로그인 서버는 비밀번호 원문을 다시 꺼낼 필요가 없다. 사용자가 입력한 후보가 맞는지만 확인하면 된다.
 
@@ -433,6 +561,8 @@ Argon2id("password", salt) == verifier?
 
 코드와 연결: [D.2 — `register → derive → verify`](#trace-password).
 
+> **첫 읽기 경로:** 위의 가입·로그인·DB 유출 흐름을 먼저 이해한다. 아래에서는 `derived_key`라는 이름, 공격을 느리게 하는 방법, salt의 역할을 각각 정리한다. scrypt의 정확한 `N/r/p` 비용식은 선택 심화이므로 처음에는 건너뛰어도 된다.
+
 ### 5.1 `derived_key`는 이름만으로 역할이 정해지지 않는다
 
 KDF는 Key Derivation Function이다. 같은 출력 바이트를 어떤 시스템에서는 암호화 key로 쓰고, 다른 시스템에서는 비밀번호 검증값으로 쓸 수 있다. 파일의 `derived_key`는 후자다. 따라서 이 예제에서는 `password_verifier`로 읽으면 된다.
@@ -451,6 +581,50 @@ KDF는 Key Derivation Function이다. 같은 출력 바이트를 어떤 시스�
 
 SHA-256을 여러 번 반복하면 time cost가 증가한다. scrypt는 중간 계산 결과를 큰 메모리에 저장하고 그 내용을 참조하며 섞어, 병렬 공격 장비도 각 후보에 메모리나 재계산 비용을 지불하게 한다. 이는 단순한 `sleep()`과 다르다. 공격자는 sleep을 제거할 수 있지만 동일 출력을 얻는 데 필요한 계산 의존성은 생략할 수 없다.
 
+#### Argon2id를 읽는 최소한의 구조
+
+Argon2id도 같은 목적의 memory-hard password KDF다. 이름 끝의 `id`는 Argon2i와 Argon2d의 메모리 접근 방식을 결합한 variant임을 뜻한다. 애플리케이션 개발자가 내부 압축 함수를 구현할 필요는 없지만, 어떤 비용을 서버가 선택하는지는 알아야 한다.
+
+```text
+Argon2id(
+    password,
+    salt,
+    memory_cost m,
+    iterations t,
+    parallelism p,
+    output_length
+) → verifier
+```
+
+개념적으로 Argon2id는 큰 메모리 영역을 여러 block으로 채우고, 앞에서 만든 block들을 반복해서 참조·혼합한 뒤 최종 verifier를 만든다. `m`은 사용할 메모리 양, `t`는 그 메모리를 몇 pass 처리할지, `p`는 lane/병렬도다. 출력에서 password를 복구하는 복호화 연산은 없다.
+
+저장 문자열은 구현에 따라 다음처럼 알고리즘과 비용, salt, verifier를 함께 표현할 수 있다.
+
+```text
+$argon2id$v=19$m=65536,t=3,p=1$<salt>$<verifier>
+```
+
+이 문자열이 알려져도 공격자는 여전히 후보 password마다 Argon2id를 실행해야 한다. 반대로 salt와 parameter가 없으면 정상 서버도 로그인 때 같은 계산을 재현할 수 없다.
+
+Memory-hard라는 성질은 서버에도 비용이다. 한 번의 검증에 64 MiB를 쓰는 설정에서 100건을 동시에 시작하면 Argon2 작업만 이론상 약 6.4 GiB를 요구할 수 있다. 그래서 운영 서버는 로그인 요청을 무제한 병렬 실행하지 않는다.
+
+```text
+로그인 endpoint rate limit
+        │
+        ▼
+길이가 제한된 작업 queue
+        │
+        ▼
+동시 실행 수가 제한된 password worker
+        │
+        ▼
+Argon2id verify
+```
+
+작은 서비스에서는 이를 애플리케이션 내부의 제한된 worker pool로 시작할 수 있다. 서비스 규모와 보안 경계가 커지면 인증 서비스를 분리할 수 있지만, OOM 방지의 첫 수단은 마이크로서비스 분리가 아니라 **parameter benchmark, rate limit, queue 상한, 동시성 제한**이다. 로그인 성공 뒤의 일반 API 요청은 password KDF를 매번 실행하지 않고 session 또는 access token을 사용한다.
+
+#### 선택 심화: 실습에 사용한 scrypt 파라미터
+
 실습의 파라미터 `N=2^14, r=8, p=1`에서 핵심 메모리 항은 대략 `128*N*r`바이트, 즉 16 MiB다. N은 주요 작업량, r은 내부 블록 크기, p는 병렬화 관련 파라미터다. 정확한 전체 메모리와 시간은 구현에 따라 달라지며 이 값은 운영 권장값이 아니라 작은 실습값이다. `dklen=32`는 출력 길이지 공격 비용 설정이 아니다. [scrypt 명세 RFC 7914](https://www.rfc-editor.org/rfc/rfc7914.html)
 
 비용을 높이면 공격 비용과 함께 로그인 서버의 메모리·CPU·DoS 부담도 증가한다. 실제 설정은 목표 지연, 동시 로그인 수, 장비, 최신 운영 지침을 보고 정한다.
@@ -463,11 +637,19 @@ SHA-256을 여러 번 반복하면 time cost가 증가한다. scrypt는 중간 �
 
 **확인 문제:** 해시된 비밀번호와 salt가 모두 유출됐는데도 salt가 쓸모 있는 이유를 설명하자. 그리고 32바이트 출력이 32바이트 균등 난수만큼의 엔트로피를 보장하는지 판단하자.
 
+이 장을 지나면 DB의 `salt + parameters + verifier`를 보며 “password를 저장했다”고 말하지 않게 된다. 대신 “서버가 후보를 재계산할 수 있는 검증 record를 저장했다”고 읽게 된다. Password 문제는 해결했지만, 이제 다른 종류의 입력이 남는다. 서버가 받은 일반 message가 중간에 바뀌지 않았고 공유 key를 가진 쪽에서 왔는지는 어떻게 확인할까?
+
+> **5장 통과 기준:** DB에는 password 대신 `salt + parameters + verifier`를 저장한다는 것, 로그인 때 제출된 password 후보로 같은 계산을 반복한다는 것, salt는 공개되어도 계정 간 계산 재사용을 막는다는 것, Argon2id/scrypt의 목적은 오프라인 추측 한 번의 비용을 높이는 것임을 설명할 수 있으면 6장으로 이동한다. scrypt 비용식을 외울 필요는 없다.
+
 ---
 
 <a id="mac"></a>
 
 ## 6. HMAC: 공유키를 가진 쪽만 만들 수 있는 인증값
+
+5장의 verifier는 서버가 password 후보를 검사하기 위한 저장값이었다. 이번에는 Alice가 Bob 서버에 `amount=10000`이라는 message를 보냈다고 하자. Bob은 message가 도착했다는 사실뿐 아니라, 전송 중 바뀌지 않았고 둘만 아는 key를 가진 쪽이 만들었다는 사실도 확인하고 싶다. 이때 필요한 도구가 MAC이다.
+
+**이 장에서 반드시 이해할 것:** HMAC은 message를 숨기지 않는다. Alice와 Bob이 같은 secret key를 이미 가지고 있을 때, message와 함께 tag를 보내면 Bob이 같은 계산을 반복해 변조·위조 여부를 검사할 수 있다.
 
 HMAC은 해시 기반 Message Authentication Code다.
 
@@ -493,11 +675,285 @@ received_tag == HMAC(K, received_message)
 
 코드와 연결: [D.3 — `authenticate()`와 검증](#trace-hmac).
 
-### 6.1 그냥 SHA256(key ∥ message)를 쓰면 안 되는가
+> **첫 읽기 경로:** `hmac_demo.py`에서 정상 message는 통과하고 한 글자 바꾼 message는 실패하는 것을 확인한다. 아래 6.1의 결론만 읽고 접힌 심화 설명은 열지 않은 채 [6.2절](#hmac-boundaries)로 이동해도 된다.
 
-SHA-256은 앞에서 본 것처럼 이전 state에 다음 블록을 이어 처리한다. 단순한 secret-prefix hash는 특정 조건에서 기존 digest와 길이를 이용해 뒤에 데이터를 붙인 메시지의 digest를 계산하는 length-extension 공격을 허용한다. 따라서 “비밀을 앞에 붙였으니 MAC”이라고 결론 내릴 수 없다.
+### 6.1 왜 표준 HMAC을 사용해야 하는가
 
-HMAC은 안쪽과 바깥쪽 해시를 결합하는 정의된 구성이다. SHA-256의 경우 key가 64바이트보다 길면 먼저 해시하고, 이후 64바이트보다 짧으면 뒤에 0을 채운다. 이렇게 해시 블록 크기에 맞춘 값을 K0라 하면:
+SHA-256 자체에는 key 인자가 없다. 개발자가 `SHA256(secret_key || message)`처럼 secret을 평범한 입력 앞에 붙이면 얼핏 MAC처럼 보이지만, SHA-256의 내부 구조 때문에 특정 조건에서 length-extension 공격을 허용한다. 결론은 “hash에 비밀을 아무 방식으로나 섞으면 MAC이 된다”가 아니다.
+
+HMAC은 key와 message를 해시에 결합하는 방법까지 정의하고 분석한 표준 구성이다. 애플리케이션에서는 `HMAC_SHA256(key, message)`라는 검증된 구현을 호출한다. 첫 독서에서 length-extension의 padding을 계산하거나 `ipad/opad` 수식을 암기할 필요는 없다.
+
+<details>
+<summary><strong>선택 심화 펼치기: length extension에서 HMAC 내부 수식까지</strong></summary>
+
+아래 설명은 왜 `SHA256(key || message)`를 직접 만들지 말아야 하는지 공격자의 계산을 끝까지 추적한다. HMAC의 사용법을 이해하기 위한 선행 조건은 아니다.
+
+먼저 서버가 하려는 일을 정확히 잡자. 서버는 다음 두 가지를 확인하려 한다.
+
+- **무결성(integrity):** 메시지가 전송 중에 변조되지 않았는가?
+- **인증(authentication):** 공유 key를 가진 사람이 만든 메시지인가?
+
+이는 암호화와 다르다. MAC은 메시지 내용을 숨기지 않는다. 메시지와 함께 전달된 인증값을 이용해 **변조와 위조를 검출**한다.
+
+여기서 먼저 매우 중요한 표기상의 오해를 제거해야 한다. **SHA-256 자체에는 secret key가 없다.** SHA-256의 인터페이스는 본질적으로 다음과 같다.
+
+```text
+digest = SHA256(data)
+```
+
+SHA-256의 초기 state와 round constant를 포함한 알고리즘 전체는 공개되어 있다. 누구든 같은 `data`를 넣으면 같은 digest를 계산할 수 있다. 뒤에서 쓰는 다음 표기에서 `key`는 SHA-256 함수에 전달하는 별도의 key 인자가 아니다.
+
+```text
+SHA256(key || message)
+       └───── data 전체 ─────┘
+```
+
+호출자가 비밀 바이트열인 `key`를 평범한 `message` 앞에 직접 이어 붙이고, 그 결과 전체를 SHA-256의 유일한 입력 `data`로 넣었을 뿐이다. 즉 이것은 **keyed SHA-256이라는 알고리즘이 아니라, unkeyed SHA-256을 이용해 MAC처럼 써 보려는 임의 구성**이다.
+
+```text
+SHA-256:
+    SHA256(data)
+    → key 인자가 없는 공개 해시 함수
+
+단순 secret-prefix 구성:
+    data = secret_key || message
+    SHA256(data)
+    → 비밀값을 입력 앞에 붙였을 뿐
+
+HMAC-SHA256:
+    HMAC_SHA256(secret_key, message)
+    → secret_key와 message를 정해진 HMAC 구조로 결합
+```
+
+또한 SHA-256 규격에서 round constant를 `K`라고 표기하는 자료가 있지만, 그것들은 공개 상수다. 이 장의 `key`, `K`, `K0`는 Alice와 Bob 서버가 공유하는 **비밀 바이트열**을 뜻하며 SHA-256 내부의 공개 round constant와 전혀 다른 대상이다.
+
+#### 6.1.1 정상적인 검증은 어떻게 보이는가
+
+Alice와 Bob 서버만 다음 비밀키를 알고 있다고 하자.
+
+```text
+key = "Alice와 Bob 서버만 아는 비밀"
+```
+
+Alice가 송금 메시지를 보낸다.
+
+```text
+message = "to=bob&amount=10000"
+```
+
+단순한 방법을 생각하면 Alice는 key와 message를 이어 붙여 SHA-256을 계산할 수 있다.
+
+```text
+tag = SHA256(key || message)
+```
+
+네트워크를 통해 전송되는 것은 다음 두 값이다. key는 전송하지 않는다.
+
+```text
+message = "to=bob&amount=10000"
+tag     = "a81f..."
+```
+
+Bob 서버도 같은 key를 가지고 있으므로 받은 message로 tag를 다시 계산한다.
+
+```text
+expected_tag = SHA256(key || received_message)
+
+expected_tag == received_tag ?
+```
+
+두 값이 같으면 서버는 “이 공유 key를 가진 누군가가 만들었고, 중간에 바뀌지 않은 메시지”라고 판단한다.
+
+공격자가 송금액만 다음과 같이 바꾸면 어떻게 될까?
+
+```text
+원래 message:          to=bob&amount=10000
+공격자가 바꾼 message: to=bob&amount=90000
+```
+
+공격자는 key를 모르므로 바뀐 message에 맞는 tag를 처음부터 계산할 수 없다. 원래 tag를 그대로 보내면 서버의 재계산 결과와 일치하지 않는다.
+
+```text
+SHA256(key || "to=bob&amount=90000") != 원래 tag
+```
+
+여기까지만 보면 `SHA256(key || message)`가 안전해 보인다. 그러나 SHA-256의 내부 처리 방식 때문에 **기존 메시지 뒤에 데이터를 추가하는 특수한 변조**가 가능하다.
+
+#### 6.1.2 length extension은 무슨 뜻인가
+
+`length extension`은 그대로 번역하면 **길이 연장**이다. 공격자는 정상적인 `message + tag`를 관찰한 뒤, key를 알아내지 않고도 기존 message 뒤에 내용을 추가하고 그에 맞는 새 tag를 계산하려 한다.
+
+```text
+정상 message:
+user=simcho&action=view
+
+공격자가 만들고 싶은 message:
+user=simcho&action=view&admin=true
+```
+
+공격자의 목표는 단순히 message를 수정하는 데서 끝나지 않는다. 수정된 message와 함께 서버 검증을 통과할 **새로운 유효 tag**까지 만드는 것이다.
+
+```text
+Alice ── 정상 message + 정상 tag ──→ 공격자 Mallory ── 변조 message + 위조 tag ──→ Bob 서버
+```
+
+놀라운 점은 공격자가 key를 복구할 필요가 없다는 것이다.
+
+#### 6.1.3 SHA-256 digest가 계산의 checkpoint가 되는 이유
+
+SHA-256은 전체 입력을 한꺼번에 처리하지 않는다. 입력을 64바이트 블록으로 나누고, 이전 블록을 처리한 state에 다음 블록을 계속 반영한다.
+
+```text
+초기 state
+    │
+    ▼
+[64바이트 block 1]
+    │
+    ▼
+중간 state
+    │
+    ▼
+[64바이트 block 2]
+    │
+    ▼
+최종 state = digest
+```
+
+개념적으로 표현하면 다음과 같다.
+
+```text
+state0 = SHA-256이 정의한 초기값
+state1 = Compress(state0, block1)
+state2 = Compress(state1, block2)
+digest = state2
+```
+
+따라서 SHA-256의 최종 digest는 단순한 결과 문자열인 동시에, 일정한 조건에서는 뒤의 블록 계산을 이어갈 수 있는 **checkpoint**처럼 이용될 수 있다.
+
+SHA-256은 입력 끝에 padding도 자동으로 붙인다.
+
+```text
+SHA256이 실제로 처리하는 바이트:
+
+key || message || padding(key || message)
+```
+
+padding에는 `0x80`, 필요한 수의 `0x00`, 원래 입력의 비트 길이가 들어간다. 공격자는 key의 값은 모르지만 key 길이를 알거나 몇 가지 후보로 추측할 수 있다. key 길이가 정해지면 padding도 계산할 수 있다.
+
+공격자는 공개된 기존 digest를 계산 시작 state로 삼아 추가 데이터만 처리한다.
+
+```text
+기존 digest를 state로 사용
+          │
+          ▼
+     "&admin=true" 처리
+          │
+          ▼
+       새로운 digest
+```
+
+이것이 length-extension 공격의 핵심이다.
+
+> 기존 digest를 출발점으로 사용해, 기존 입력 뒤에 데이터를 추가한 새로운 digest를 계산한다.
+
+#### 6.1.4 공격자는 실제로 무엇을 보내는가
+
+공격자가 만드는 메시지는 사람이 읽는 단순한 문자열과 정확히 같지는 않다. 기존 입력에 사용됐어야 할 SHA-256 padding도 message의 일부로 포함한다.
+
+```text
+forged_message =
+    original_message
+    || padding(key || original_message)
+    || "&admin=true"
+```
+
+그리고 기존 digest부터 계산을 이어서 `forged_tag`를 얻는다.
+
+```text
+forged_tag =
+    기존 digest를 시작 state로 사용해
+    "&admin=true"와 새로운 최종 padding까지 처리한 결과
+```
+
+공격자는 다음 두 값을 Bob 서버에 보낸다.
+
+```text
+message = original_message || old_padding || "&admin=true"
+tag     = forged_tag
+```
+
+#### 6.1.5 서버는 왜 속는가
+
+서버는 자신이 가진 key를 앞에 붙여 평소처럼 검증한다.
+
+```text
+SHA256(key || forged_message)
+```
+
+`forged_message`를 펼치면 다음과 같다.
+
+```text
+SHA256(
+    key
+    || original_message
+    || old_padding
+    || "&admin=true"
+)
+```
+
+서버가 `key || original_message || old_padding`까지 계산한 state는 바로 공격자가 알고 있던 기존 digest다.
+
+```text
+서버의 계산:
+
+초기 state
+   │
+   ├─ key
+   ├─ original_message
+   └─ old_padding
+          │
+          ▼
+       기존 digest
+          │
+          ├─ "&admin=true"
+          └─ 새로운 최종 padding
+                 │
+                 ▼
+             forged_tag
+```
+
+공격자는 앞부분을 계산하지 않고 공개된 기존 digest부터 시작했다.
+
+```text
+공격자의 계산:
+
+기존 digest
+    │
+    ├─ "&admin=true"
+    └─ 새로운 최종 padding
+           │
+           ▼
+       forged_tag
+```
+
+두 계산은 같은 지점에서 같은 추가 데이터를 처리하므로 결과가 같다. 서버는 tag가 일치한다는 이유로 공격자가 뒤에 내용을 추가한 메시지를 정상이라고 오인할 수 있다.
+
+#### 6.1.6 모든 `SHA256(key || message)`가 즉시 공격되는가
+
+실제 공격에는 몇 가지 조건이 필요하다.
+
+- SHA-256처럼 length extension이 가능한 구조를 사용할 것
+- `SHA256(key || message)` 형태의 secret-prefix hash일 것
+- 공격자가 기존 message와 digest를 알 것
+- key 길이를 알거나 추측할 수 있을 것
+- 메시지 형식과 파서가 중간에 포함된 바이너리 padding을 허용할 것
+- 뒤에 데이터를 추가했을 때 애플리케이션에서 의미 있는 변조가 될 것
+
+파서가 padding 바이트를 거부한다면 특정 공격은 실패할 수 있다. 그러나 보안 설계를 “우리 파서가 우연히 막아 줄 것”에 의존해서는 안 된다. 처음부터 MAC 용도로 분석되고 표준화된 HMAC을 사용한다.
+
+#### 6.1.7 HMAC은 무엇이 다른가
+
+HMAC-SHA256은 안쪽과 바깥쪽 해시를 결합한다. SHA-256의 block 크기인 64바이트에 맞게 key를 정규화한 값을 `K0`라 하면 다음과 같다.
 
 ```text
 inner = SHA256((K0 XOR ipad) || message)
@@ -507,9 +963,119 @@ ipad: 0x36을 64번 반복한 바이트열
 opad: 0x5c를 64번 반복한 바이트열
 ```
 
-이 수식은 내부·외부 단계에 다른 입력을 쓰는 구조를 보여 준다. 안전성이 “두 번 hash해서” 자동으로 생기는 것은 아니다. 직접 변형하지 않고 HMAC 구현을 사용한다. 정의는 [RFC 2104 §2](https://www.rfc-editor.org/rfc/rfc2104.html#section-2)를 참고한다.
+그림으로 보면 다음과 같다.
 
-### 6.2 인증은 정확한 바이트에 대한 것이다
+```text
+                    message
+                       │
+(K0 XOR ipad) ─────────┤
+                       ▼
+                   SHA-256
+                       │
+                       ▼
+                 inner digest
+                   32바이트
+                       │
+(K0 XOR opad) ─────────┤
+                       ▼
+                   SHA-256
+                       │
+                       ▼
+                      tag
+```
+
+외부에 공개되는 것은 최종 `tag`뿐이다. `inner digest`는 공개되지 않는다.
+
+안쪽 계산만 보면 다음 형태이므로 length extension을 떠올릴 수 있다.
+
+```text
+inner = SHA256(inner_key || message)
+```
+
+그러나 공격자가 이 계산을 이어가려면 `inner`가 필요하고, HMAC은 그것을 외부에 내보내지 않는다. 외부에 공개되는 값은 `inner`를 다시 비밀값이 포함된 바깥쪽 해시로 감싼 결과다.
+
+```text
+tag = SHA256(outer_key || inner)
+```
+
+공격자가 공개된 최종 tag에 length extension을 적용해 만들 수 있는 형태는 다음과 같다.
+
+```text
+SHA256(outer_key || old_inner || padding || attacker_data)
+```
+
+하지만 서버가 변경된 message에 대해 계산하는 HMAC은 다음 형태다.
+
+```text
+new_inner = SHA256(inner_key || changed_message)
+new_tag   = SHA256(outer_key || new_inner)
+```
+
+두 구조가 다르기 때문에 최종 tag에서 계산을 연장해도 변경된 message의 올바른 HMAC tag가 되지 않는다.
+
+#### 6.1.8 K0, ipad, opad는 왜 필요한가
+
+SHA-256의 digest 크기는 32바이트지만 한 번에 처리하는 block 크기는 64바이트다. HMAC은 key를 block 크기에 맞춰 `K0`로 정규화한다.
+
+```text
+key가 64바이트보다 길다:
+    먼저 SHA256(key)로 32바이트 값을 만들고 뒤를 0으로 채운다.
+
+key가 64바이트보다 짧다:
+    뒤를 0으로 채워 총 64바이트로 만든다.
+```
+
+그다음 하나의 `K0`에서 서로 다른 두 입력을 만든다.
+
+```text
+inner_key = K0 XOR ipad
+outer_key = K0 XOR opad
+```
+
+`ipad`와 `opad`는 안쪽 해시와 바깥쪽 해시가 서로 다른 역할의 입력을 사용하게 한다. 같은 key를 서로 다른 문맥에서 구분해 사용하는 **domain separation**으로 이해할 수 있다.
+
+HMAC이 안전한 이유를 단순히 “SHA-256을 두 번 했기 때문”이라고 이해하면 안 된다. 다음과 같은 임의 구성은 HMAC이 아니다.
+
+```text
+SHA256(SHA256(key || message))
+```
+
+HMAC의 안전성은 `ipad/opad`, key 정규화, 내부 해시, keyed outer hash가 결합된 정의된 구조에 기반한다. 직접 변형하지 말고 표준 라이브러리의 HMAC 구현을 사용한다. 정의는 [RFC 2104 §2](https://www.rfc-editor.org/rfc/rfc2104.html#section-2)를 참고한다.
+
+#### 6.1.9 이 절의 핵심
+
+```text
+SHA256(key || message)
+
+문제:
+기존 digest가 SHA-256 계산의 checkpoint처럼 노출된다.
+
+공격:
+공격자는 정상 message와 tag를 관찰한 뒤,
+key 없이 message 뒤에 데이터를 추가하고 새 tag를 계산한다.
+
+결과:
+조건이 맞으면 서버가 변조된 message를 정상으로 오인한다.
+```
+
+반면 HMAC은 내부 digest를 별도의 keyed outer hash로 감싼다.
+
+```text
+HMAC(key, message)
+
+기존 tag를 변경된 message의 인증값을 만드는
+연장 checkpoint로 사용할 수 없다.
+```
+
+따라서 이 문장으로 정리할 수 있다.
+
+> Length extension은 공격자가 정상적인 `message + digest`를 관찰한 뒤, key를 복구하지 않고도 기존 message 뒤에 내용을 추가하고 서버 검증을 통과할 새 digest를 만드는 공격이다. HMAC은 내부 해시 결과를 별도의 keyed outer hash로 감싸 이러한 SHA-256의 구조적 특성이 MAC 위조로 이어지지 않게 한다.
+
+</details>
+
+<a id="hmac-boundaries"></a>
+
+### 6.2 실무 경계: 정확한 바이트, 공유키, replay
 
 `{"a":1,"b":2}`와 `{"b":2,"a":1}`은 앱에서 같은 객체일 수 있지만 바이트가 다르다. tag를 검증하려면 raw request bytes에 대해 계산하거나, 명확한 canonical serialization 규칙을 합의해야 한다.
 
@@ -519,15 +1085,147 @@ HMAC은 공유키 보유자 중 누가 만들었는지 구별하지 않는다. B
 
 **확인 문제:** 공격자가 결제 요청 바이트를 하나도 바꾸지 않고 두 번 보내면 HMAC 검증이 두 번째에 실패하는가? 실패하지 않는다. 결제의 중복 실행 방지는 별도 식별자와 서버 상태가 담당한다.
 
+이 장을 지나면 HMAC tag를 “메시지에 붙인 암호문”이 아니라 **공유 key로 정확한 message bytes를 인증한 값**으로 보게 된다. 그러나 message는 여전히 평문이다. `shop.example`이 사용자의 API token을 DB에 저장하려면 변조 검출뿐 아니라 내용 자체도 숨겨야 한다. 다음 장에서 confidentiality와 integrity를 하나의 인터페이스로 묶는다.
+
+> **6장 통과 기준:** HMAC의 입력이 `secret key + message`라는 것, 수신자가 같은 key로 tag를 다시 계산한다는 것, HMAC은 message를 숨기거나 replay를 막지 않는다는 것을 설명할 수 있으면 7장으로 이동한다. Length extension의 padding과 `ipad/opad` 수식을 암기할 필요는 없다.
+
 ---
 
 <a id="symmetric"></a>
 
 ## 7. AES-GCM: 공유키로 숨기고 변조도 거부한다
 
-**이 장의 질문:** 같은 key로 여러 메시지를 암호화하는데, 출력은 달라지고 수신자는 어떻게 정확히 복원하는가?
+6장의 HMAC은 봉인이 뜯겼는지는 알려 주지만 상자 안의 내용을 가리지는 않았다. 이제 `shop.example`이 맡아야 할 API token처럼, 공격자에게 보이면 안 되고 바뀐 채로 사용되어서도 안 되는 데이터를 다룬다.
 
-### 7.0 XOR에서 AES까지: 생략했던 연결
+**이 장의 질문:** HMAC은 메시지를 숨기지 않는데, 현대 애플리케이션은 어떻게 메시지를 숨기면서 동시에 변조도 검출하는가? 같은 key를 여러 메시지에 사용해도 출력이 달라지는 이유와 수신자가 원문을 복원하는 방법은 무엇인가?
+
+### 7.1 왜 AES-GCM이 필요한가
+
+6장의 HMAC은 공유 key를 가진 쪽이 만든 tag로 메시지의 변조와 위조를 검출한다. 그러나 message 자체는 그대로 전송되므로 기밀성은 제공하지 않는다.
+
+```text
+message + HMAC tag
+    ├─ message 내용: 누구나 읽을 수 있음
+    └─ 변조·위조: key가 없으면 유효한 새 tag를 만들기 어려움
+```
+
+민감한 API token, 개인정보, 결제 정보를 저장하거나 전송하려면 다음 두 성질이 함께 필요하다.
+
+```text
+confidentiality:
+    key 없는 공격자가 내용을 읽지 못한다.
+
+integrity/authenticity:
+    공격자가 ciphertext나 관련 metadata를 바꾸면 검증에 실패한다.
+```
+
+암호화만 하고 인증하지 않는 방식도 충분하지 않다. 공격자가 plaintext를 읽지 못하더라도 ciphertext를 조작해 복호화 결과를 바꾸거나, 손상된 데이터를 애플리케이션이 처리하게 만들 수 있기 때문이다. 현대적인 기본 선택은 두 성질을 하나의 정의된 인터페이스로 제공하는 **AEAD(Authenticated Encryption with Associated Data)**다.
+
+AES-GCM은 AES를 사용하는 대표적인 AEAD다. 이름을 두 부분으로 나누어 읽자.
+
+```text
+AES:
+    secret key로 16바이트 block을 변환하는 block cipher
+
+GCM(Galois/Counter Mode):
+    AES를 counter 방식으로 사용해 임의 길이 plaintext를 암호화하고,
+    ciphertext와 AAD에 대한 authentication tag도 계산하는 mode
+```
+
+AES-128/192/256의 숫자는 key 길이를 뜻하고, 모두 128비트(16바이트) block을 처리한다. AES 자체는 임의 길이 메시지, nonce, AAD, tag를 정의하지 않는다. GCM이 AES를 어떻게 반복 호출하고 결과를 조합할지 정의한다. [AES 표준](https://csrc.nist.gov/pubs/fips/197/final), [GCM 정의](https://csrc.nist.gov/pubs/sp/800/38/d/final)
+
+AES-GCM의 인증 계산은 HMAC을 ciphertext 뒤에 붙인 것이 아니다. AES로 만드는 counter-mode mask와 GHASH라는 GCM 고유의 인증 계산을 하나의 규격으로 결합한다. 애플리케이션은 이를 따로 조립하지 않고 라이브러리의 `encrypt`와 `decrypt` 인터페이스를 사용한다.
+
+### 7.2 AES-GCM의 입력과 출력부터 보자
+
+Alice와 Bob 서버가 같은 secret key `K`를 이미 공유한다고 가정한다. key를 처음 안전하게 공유하는 문제는 10장의 key agreement에서 다룬다.
+
+AES-GCM 암호화의 핵심 입력은 네 가지다.
+
+| 입력 | 비밀인가? | 역할 |
+|---|---:|---|
+| key `K` | 비밀 | 암호화와 tag 계산의 보안 근거 |
+| nonce `N` | 공개 가능 | 같은 key 아래의 각 암호화 사용을 구분 |
+| plaintext `P` | 비밀로 만들 대상 | 암호화할 실제 데이터 |
+| AAD `A` | 공개 가능 | 숨기지는 않지만 함께 변조를 검출할 문맥 |
+
+암호화는 ciphertext `C`와 authentication tag `T`를 만든다.
+
+```text
+(C, T) = AES_GCM_Encrypt(K, N, P, A)
+```
+
+저장하거나 전송해야 하는 값은 보통 다음과 같다.
+
+```text
+공개 전송·저장:
+    nonce N
+    ciphertext C
+    tag T
+    AAD를 재구성할 metadata
+
+비밀로 유지:
+    key K
+
+암호화 뒤에는 남기지 않거나 제한해야 함:
+    plaintext P
+```
+
+Bob 서버는 이미 가진 같은 key와 함께 받은 nonce, ciphertext, 기대하는 AAD, tag를 사용한다.
+
+```text
+P 또는 FAIL = AES_GCM_Decrypt(K, N, C, A, T)
+```
+
+```text
+Alice                                             Bob 서버
+
+K, N, P, A                                        K 보유
+    │                                               ▲
+    ▼                                               │
+AES-GCM encrypt                                     │
+    │                                               │
+    └──── N, C, A에 필요한 metadata, T ────────────┘
+                                                    │
+                                              AES-GCM decrypt
+                                                    │
+                                      tag 유효 ─────┴───── tag 무효
+                                          │                    │
+                                          ▼                    ▼
+                                          P                   FAIL
+```
+
+`decrypt`는 tag 검증에 성공했을 때만 plaintext를 반환해야 한다. 인증에 실패한 plaintext를 먼저 애플리케이션에 넘기고 나중에 경고하는 인터페이스로 이해하면 안 된다.
+
+같은 key를 사용해도 nonce가 달라지면 AES에 들어가는 counter block들이 달라지고, plaintext와 XOR할 mask도 달라진다. 따라서 같은 plaintext도 일반적으로 다른 ciphertext가 된다. nonce는 비밀이 아니므로 ciphertext와 함께 Bob에게 전달할 수 있다. Bob은 `K`와 `N`으로 Alice와 같은 mask를 재생성한다.
+
+```text
+같은 K + 다른 N
+    → 다른 counter block
+    → 다른 AES 출력 mask
+    → 같은 P라도 다른 C
+
+Bob:
+    미리 가진 K + 전달받은 N
+    → 동일한 mask 재생성
+    → P 복원
+```
+
+단, **같은 key에서 nonce를 재사용해서는 안 된다.** nonce의 목적은 무작위 장식이 아니라 한 key 아래에서 암호화 사용을 구분하는 것이다. 재사용하면 기밀성이 무너지고 GCM tag의 안전성도 심각하게 손상된다.
+
+AES-GCM이 제공하지 않는 성질도 구분한다.
+
+- key를 공유한 여러 당사자 중 정확히 누가 만들었는지는 구별하지 않는다.
+- 과거의 유효한 ciphertext를 그대로 다시 보내는 replay를 자동으로 막지 않는다.
+- 과거 DB 상태 전체로 되돌리는 rollback을 자동으로 막지 않는다.
+- endpoint가 장악되어 key와 plaintext를 읽는 공격까지 해결하지 않는다.
+
+> **첫 읽기 경로:** 여기까지 이해했다면 [7.6절의 저장 포맷과 실습](#aes-gcm-practice)으로 바로 이동해도 된다. 다음 세 절은 왜 counter와 XOR가 등장하고 tag가 어떻게 만들어지는지 내부를 추적하는 선택 심화다.
+
+<details>
+<summary><strong>선택 심화 펼치기: XOR에서 counter와 GHASH까지</strong></summary>
+
+### 7.3 선택 심화: XOR, keystream, AES block cipher
 
 XOR는 같은 비트면 0, 다르면 1을 반환한다. 그래서 `x XOR s XOR s = x`다.
 
@@ -563,13 +1261,9 @@ SubBytes의 치환표(S-box)는 256개의 byte 입력 각각에 다른 byte 출�
 
 > 학습 경계: 이 장의 손계산은 XOR·counter·입출력 의존성을 설명한다. [D.6](#trace-tag)에서는 선택 심화로 GHASH와 tag를 재구성한다. AES 자체의 구현과 운영 최적화는 다루지 않는다. 운영 코드는 고수준 AEAD API를 사용한다.
 
-AES는 128비트 블록을 변환하는 block cipher다. AES-128/192/256의 숫자는 key 길이를 의미하고, 세 종류 모두 128비트 블록을 처리한다. 이는 [NIST FIPS 197](https://csrc.nist.gov/pubs/fips/197/final)에 정의되어 있다.
+### 7.4 선택 심화: GCM의 암호화 부분 — nonce, counter, XOR
 
-AES만으로는 임의 길이 메시지, nonce, 인증 tag 같은 프로토콜이 생기지 않는다. GCM은 AES를 사용하는 AEAD 모드다. [NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final)는 GCM을 associated data를 지원하는 authenticated encryption 알고리즘으로 정의한다.
-
-### 7.1 암호화 부분
-
-이제 Alice와 Bob이 **같은 K를 미리 보유**했다고 가정한다. K를 처음 공유하는 방법은 10장에서 해결한다. nonce N은 Alice가 메시지마다 정하고 공개 전송한다. Counter는 메시지 내부 block 번호에 대응하는 숫자다. Nonce는 메시지 사이를 구분하고 counter는 한 메시지 안의 block을 구분한다.
+7.2절의 가정을 이어 간다. Alice는 메시지마다 nonce `N`을 정해 공개 전송한다. Counter는 메시지 내부 block 번호에 대응하는 숫자다. Nonce는 메시지 사이를 구분하고 counter는 한 메시지 안의 block을 구분한다.
 
 96비트 nonce를 사용할 때 GCM은 nonce와 증가하는 counter로 16바이트 AES 입력을 만든다.
 
@@ -607,7 +1301,7 @@ Alice: C = P XOR mask          Bob: P = C XOR mask
 
 랜덤 nonce에는 충돌 가능성이 있다. 균등한 96비트 nonce를 q번 뽑으면 충돌 확률은 작은 q 범위에서 대략 `q(q-1)/2^97`이다. `q=2^32`라면 약 `2^-33`이다. 이 값은 운영 허용량 추천이 아니라 birthday effect 계산 예다. 대규모 시스템은 모든 writer가 한 key로 만든 메시지 수, 충돌 방지, key rotation을 함께 설계해야 한다. 단조 counter를 쓰면 재시작·동시 실행·snapshot 복구에도 중복되지 않도록 해야 한다.
 
-### 7.2 인증 부분
+### 7.5 선택 심화: GCM의 인증 부분 — GHASH, AAD, tag
 
 GCM은 ciphertext와 AAD를 인증하는 tag를 만든다.
 
@@ -634,7 +1328,11 @@ AAD가 `record:alice`이면 Bob의 정상 ciphertext를 Alice 자리로 옮겨�
 
 API는 태그 불일치를 `InvalidTag`로 알린다. 이를 key 오류, nonce 오류, AAD 오류, ciphertext 오류 중 하나로 세분하지 않는 것이 정상이다. 인증이 실패한 데이터는 처리하지 않는다.
 
-### 7.3 저장 포맷
+</details>
+
+<a id="aes-gcm-practice"></a>
+
+### 7.6 실무에서 저장할 값과 확인할 실습
 
 애플리케이션이 직접 포맷을 만든다면 최소한 다음 정보가 필요하다.
 
@@ -657,13 +1355,25 @@ key 자체는 이 레코드에 넣지 않는다.
 
 코드와 연결: [D.4 — Envelope/API](#trace-envelope), [D.5 — counter와 XOR](#trace-counter), [D.6 — tag](#trace-tag), [D.7 — 실패 실습](#trace-attacks).
 
+이 장에서 AES-GCM은 마침내 `plaintext → nonce + ciphertext + tag`라는 저장 가능한 모양을 만들었다. 그러나 함수 호출은 key `K`가 이미 메모리에 있다는 데서 시작했다. 프로세스가 재시작해도 같은 데이터를 읽으려면 K를 다시 찾아야 하고, DB를 훔친 공격자에게 K까지 같이 주어서는 안 된다. 다음 장의 질문은 알고리즘이 아니라 **key의 거주지와 권한 경계**다.
+
+> **7장 통과 기준:** `K`는 비밀이고 `N/C/T`는 함께 저장·전송할 수 있다는 것, `decrypt`는 tag가 맞을 때만 plaintext를 반환한다는 것, 같은 key에서는 nonce가 절대로 재사용되면 안 된다는 것, AAD는 숨기지 않지만 문맥의 변조를 검출한다는 것을 설명할 수 있으면 8장으로 이동한다. AES round와 GHASH 유한체 곱셈을 설명할 필요는 없다.
+
 ---
+
+# 제3부. 암호문보다 어려운 것 — key를 운영하는 시스템
+
+AES-GCM 호출은 몇 줄이면 끝난다. 그러나 `shop.example`이 그 key를 소스 코드나 DB에 함께 넣는 순간, DB 암호화의 보호 경계는 사라진다. 세 번째 부에서는 암호문 자체보다 **복호화 권한이 어디에 있고 시간에 따라 어떻게 변하는지**를 추적한다. 여기서부터 암호학은 함수 사용법이 아니라 애플리케이션 아키텍처가 된다.
 
 <a id="storage"></a>
 
 ## 8. 현대 애플리케이션은 암호화된 값을 어디에 저장하는가
 
 **이 장의 질문:** `AESGCM(key)`의 key는 누가 만들고, 재시작 후 어디서 찾아오며, DB dump에는 어떤 바이트가 남는가?
+
+여기서부터 암호학은 함수 호출을 넘어 아키텍처가 된다. `AESGCM(key)` 한 줄은 key가 이미 안전하게 준비됐다고 가정하지만, 운영 시스템은 그 key를 배포하고 재시작 뒤 복구하며 접근 권한과 감사 기록을 남겨야 한다. “DB와 key를 분리한다”는 말을 실제 컴포넌트로 펼쳐 보자.
+
+**이 장에서 반드시 이해할 것:** DB에는 nonce와 ciphertext/tag를 저장할 수 있지만, 그것을 복호화하는 plaintext key를 같은 권한 경계에 그대로 두면 DB 분리 보호의 의미가 약해진다. Secret Manager는 앱이 사용하는 secret을 전달·관리하고, KMS는 cryptographic key와 연산·정책·감사에 특화되어 있다. 실행 중인 앱 메모리에는 필요한 순간 plaintext와 key가 존재할 수 있다.
 
 “보통 Vault나 Secret Manager를 쓰나?”의 답은 다음과 같다.
 
@@ -799,7 +1509,10 @@ KMS를 사용하는 주된 이유는 단순한 파일 보관 이상의 운영 �
 - plaintext root key의 export 방지
 - 중앙 정책과 사고 대응
 
-### 8.4 Envelope encryption: 현대적인 대규모 저장 패턴
+<details>
+<summary><strong>선택 심화 펼치기: envelope encryption의 전체 흐름</strong></summary>
+
+### 8.4 선택 심화: Envelope encryption이라는 대규모 저장 패턴
 
 KMS로 모든 대용량 데이터를 직접 암호화하면 API 호출 지연, 비용, 입력 크기 제한, 가용성 결합이 생길 수 있다. 대신 두 계층의 key를 사용한다.
 
@@ -883,6 +1596,8 @@ plaintext = aead_decrypt(dek, row.nonce, row.ciphertext_and_tag, expected_aad)
 | 네트워크 | 전송 기록이 남을 수 있음 | TLS로 보호된 API 요청 |
 
 DEK 범위는 레코드별, 파일별, tenant별 등으로 정할 수 있다. 더 좁으면 노출 범위를 줄이고 metadata와 API 호출량이 늘 수 있다. DEK를 레코드마다 쓰더라도 세션 traffic key와는 용도와 수명주기가 다르다.
+
+</details>
 
 ### 8.5 Vault란 무엇인가
 
@@ -980,6 +1695,10 @@ KMS: 암호키와 암호 연산/수명주기 관리
 업무 DB: 사용자 데이터의 ciphertext 보관
 ```
 
+이제 `shop.example`의 한 행을 볼 때 DB에는 ciphertext와 복호화 metadata가 있고, Secret Manager나 KMS에는 별도 권한 경계가 있으며, 실제 복호화 순간에는 앱 메모리에 plaintext가 나타난다는 공간 지도가 생겼다. 하지만 key는 한 번 배치하고 끝나는 물건이 아니다. 버전이 바뀌고, rotation되고, 백업되며, 때로는 삭제된다. 다음 장에서는 이 지도를 시간축으로 돌린다.
+
+> **8장 통과 기준:** 업무 DB, 애플리케이션 메모리, Secret Manager, KMS에 각각 무엇이 존재하는지 그릴 수 있고, “KMS를 쓰면 앱이 plaintext를 절대 보지 않는다”가 왜 일반적으로 틀린지 설명할 수 있으면 9장으로 이동한다. Envelope encryption의 SDK pseudocode는 외울 필요가 없다.
+
 ---
 
 <a id="lifecycle"></a>
@@ -987,6 +1706,10 @@ KMS: 암호키와 암호 연산/수명주기 관리
 ## 9. Key 관리에서 실제로 어려운 부분
 
 암호화 함수 호출보다 key lifecycle이 더 어렵다.
+
+8장은 key가 **어디에 있는가**를 물었다. 9장은 같은 key를 시간에 따라 추적한다. 오늘 생성한 version 3으로 새 데이터를 쓰면서도 어제의 version 2 ciphertext를 읽어야 하고, KMS 장애와 관리자 실수, 삭제와 복구까지 다뤄야 한다. 알고리즘이 맞아도 이 수명주기가 끊기면 데이터는 공격자뿐 아니라 우리에게도 영원히 읽히지 않는다.
+
+**이 장에서 반드시 이해할 것:** 안전한 알고리즘을 골라도 key를 생성·전달·식별·rotation·backup·삭제하는 운영이 실패하면 데이터를 잃거나 공격자에게 복호화 권한을 넘길 수 있다. `key_id`는 key 자체가 아니며, 애플리케이션이 KMS를 호출하려면 먼저 workload identity라는 신뢰 출발점이 필요하다.
 
 ### 9.1 생성
 
@@ -1080,11 +1803,21 @@ key를 잃으면 정상 사용자도 ciphertext를 복호화할 수 없다. key 
 
 그러나 감사 로그에 plaintext, key, token을 남기면 안 된다.
 
+여기까지의 저장 문제는 한 조직이 key를 생성하고 그 조직의 앱이 다시 사용하는 상황이었다. 이 경계 안에서는 Secret Manager와 IAM으로 key를 전달할 수 있다. 하지만 처음 접속한 사용자의 브라우저와 `shop.example` 서버는 아직 공통 AES key가 없다. 다음 장에서는 **미리 나눈 비밀 없이 어떻게 같은 비밀에 도달하는가**라는 새로운 문제로 넘어간다.
+
+> **9장 통과 기준:** ciphertext가 자신의 `key_version`을 기록해야 하는 이유, 새 write와 기존 read를 함께 처리하는 rotation 방식, key를 잃으면 정상 사용자도 복호화할 수 없다는 사실, KMS 접근 로그에 plaintext를 남기면 안 되는 이유를 설명할 수 있으면 10장으로 이동한다.
+
 ---
+
+# 제4부. 처음 만난 두 시스템이 서로를 믿기까지
+
+한 조직 안에서는 IAM과 Secret Manager를 이용해 shared key를 전달할 수 있었다. 인터넷의 브라우저와 서버는 그런 사전 관계가 없다. 네 번째 부의 질문은 두 단계로 나뉜다. **비밀을 보내지 않고 같은 비밀을 만드는 방법**, 그리고 **그 비밀을 정말 의도한 상대와 만들었다고 확인하는 방법**이다. 이 둘을 분리해서 이해해야 TLS가 한 덩어리의 마법처럼 보이지 않는다.
 
 <a id="asymmetric"></a>
 
 ## 10. 비대칭키: “public으로 암호화, private으로 복호화”보다 넓은 개념
+
+**이 장에서 반드시 이해할 것:** 비대칭키는 하나의 만능 연산 이름이 아니다. X25519 key agreement, Ed25519 digital signature, RSA-OAEP public-key encryption은 서로 다른 문제와 API를 가진다. Public key는 공개할 수 있지만, 그 public key가 누구의 것인지는 수학만으로 알 수 없다.
 
 ### 먼저, 대칭키만으로 해결하지 못한 문제
 
@@ -1110,7 +1843,14 @@ public key:  누구에게나 공개 가능
 
 `public key로 암호화하고 private key로 복호화한다`는 설명은 RSA 암호화 같은 일부 구성에는 맞지만, X25519 키 교환이나 Ed25519 서명을 설명하지 못한다.
 
-### 10.1 준비 수학: 나머지 연산, 군, 그리고 한 방향으로 쉬운 계산
+> **첫 읽기 경로:** 위 표에서 세 역할을 구분했다면 [X25519 라이브러리 흐름](#x25519-api)으로 바로 이동해도 된다. 10.1~10.2와 10.3 앞부분의 타원곡선 손계산은 왜 양쪽 shared secret이 같아지는지 수학적으로 추적하고 싶을 때 읽는 선택 심화다.
+
+<details>
+<summary><strong>선택 심화 펼치기:</strong> 군과 작은 Diffie–Hellman 손계산</summary>
+
+첫 독서에서 필요한 결론은 간단하다. 각자 private 값은 보내지 않고 public 값만 교환하지만, 양쪽은 같은 shared secret을 계산할 수 있다. 아래 두 절은 그 등식이 어디에서 오는지 작은 수로 확인한다.
+
+### 10.1 선택 심화: 준비 수학 — 나머지 연산, 군, 한 방향으로 쉬운 계산
 
 `x mod p`는 x를 p로 나눈 나머지다. Python의 `%`에 해당한다.
 
@@ -1154,7 +1894,7 @@ private a ── one-way public operation ──→ public A
 
 public A에서 private a를 되찾기 어려운 수학 구조를 사용한다.
 
-### 10.2 작은 수로 계산하는 Diffie–Hellman
+### 10.2 선택 심화: 작은 수로 계산하는 Diffie–Hellman
 
 아래의 수는 **손으로 검산하기 위한 장난감**이다. 보안용으로 쓰지 않는다.
 
@@ -1183,7 +1923,14 @@ python3 03_asymmetric/key_roles_lab.py dh
 
 **확인 질문:** Alice가 Bob의 private b를 받은 적이 있는가? 없다. 서버가 AES key 2를 만들어 보내준 것인가? 아니다. 양쪽이 독립 계산했으며 실제 암호화 key는 뒤의 KDF로 만든다.
 
+</details>
+
 ### 10.3 타원곡선의 scalar multiplication과 X25519
+
+> **선택 심화 경계:** 아래 작은 곡선의 점 덧셈은 X25519의 수학적 배경이다. 첫 독서에서는 [라이브러리 관점의 X25519 흐름](#x25519-api)으로 건너뛴다.
+
+<details>
+<summary><strong>선택 심화 펼치기:</strong> 작은 타원곡선에서 점을 더하는 법</summary>
 
 큰 정수의 거듭제곱 대신 다른 군을 쓸 수 있다. **Elliptic curve cryptography(ECC)**는 정해진 방정식을 만족하는 점들과 특수한 점 O를 원소로 하고, 점의 덧셈을 정의한다. 여기서 O는 항등원(point at infinity)이며 평범한 좌표 `(0, 0)`이 아니다.
 
@@ -1213,7 +1960,11 @@ Alice: [a]B=[ab]G             Bob: [b]A=[ab]G
 
 X25519는 Curve25519 위에서 key agreement에 쓰는 구체적인 scalar multiplication 함수다. API의 private/public 값은 각각 32바이트로 표현되지만, public 값은 점의 모든 좌표를 단순히 이어 붙인 것이 아니라 특정 좌표의 인코딩이다. private 입력에도 정해진 비트 처리가 있다. 이를 직접 구현하지 않는다. 256비트로 표현한다고 보안 강도가 AES-256과 같다는 뜻은 아니다. X25519는 대략 128비트 수준의 고전적 보안을 목표로 한다. [RFC 7748](https://www.rfc-editor.org/rfc/rfc7748.html)
 
-이제 라이브러리 API를 읽을 준비가 됐다.
+</details>
+
+<a id="x25519-api"></a>
+
+#### 첫 독서 핵심: 라이브러리 관점의 X25519 흐름
 
 Alice와 Bob이 각자 key pair를 만든다.
 
@@ -1253,6 +2004,8 @@ HKDF는 원시 key material에서 목적과 문맥이 분리된 key들을 만든
 ### 10.4 HKDF: shared secret과 AES key는 왜 구분하는가
 
 X25519 출력 S는 비밀 key material이다. 하지만 앱은 AES key 하나뿐 아니라 송신용·수신용 key, IV 등을 필요로 할 수 있다. 원시 출력을 잘라서 용도를 섞지 않고, **KDF(key derivation function)**로 규격에 맞는 출력을 만든다.
+
+> 첫 독서에서는 `S를 AES key로 바로 쓰지 않고 HKDF에 넣어 용도·방향별 key를 만든다`까지만 이해하면 된다. 아래 Extract/Expand 수식은 선택 심화다.
 
 HKDF는 **HMAC-based Extract-and-Expand Key Derivation Function**이다. SHA-256 버전의 구조를 간략히 보자.
 
@@ -1355,7 +2108,10 @@ private key 보유자만 서명
 public key 보유자는 검증만 가능
 ```
 
-#### 검증자는 왜 private key 없이 확인할 수 있는가
+#### 선택 심화: 검증자는 왜 private key 없이 확인할 수 있는가
+
+<details>
+<summary><strong>선택 심화 펼치기:</strong> 공개키만으로 서명 관계를 검사하는 식</summary>
 
 HMAC 검증은 같은 key로 tag를 다시 계산해 비교했다. 서명에서는 **같은 서명을 다시 만드는 것이 아니라 공개된 수학 관계가 성립하는지 검사**한다.
 
@@ -1377,6 +2133,8 @@ HMAC 검증은 같은 key로 tag를 다시 계산해 비교했다. 서명에서�
 
 이 식은 **원리 설명이지 Ed25519 구현 지침이 아니다**. Ed25519는 비밀에서 메시지별 r을 결정적으로 생성하는 절차, 정확한 byte encoding, 점 검증 규칙 등을 지정한다. 이런 서명에서 r을 잘못 재사용하면 private key를 역산할 수 있다. 서명 내부의 비밀 r은 AES-GCM의 공개 nonce와 다른 역할이다. [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html)
 
+</details>
+
 실제로는 검증된 API를 쓴다.
 
 ```python
@@ -1395,7 +2153,10 @@ python3 03_asymmetric/key_roles_lab.py signature
 
 정상 메시지, 바꾼 메시지, 엉뚱한 public key를 차례로 검사한다. **검증자가 공개키를 가지고 있다는 이유로 새 서명까지 만들 수는 없다.** 하지만 shared HMAC key를 가진 검증자는 새 tag를 만들 수 있다. 이것이 배포 서명, 인증서 서명에 public verification이 유용한 이유다.
 
-### 10.7 RSA: “공개키로 암호화”가 실제로 성립하는 예
+<details>
+<summary><strong>선택 심화 펼치기:</strong> RSA 산술과 public-key encryption</summary>
+
+### 10.7 선택 심화: RSA — “공개키로 암호화”가 실제로 성립하는 예
 
 X25519는 key agreement이지 `encrypt(public_key, message)` 함수가 아니었다. 그 함수가 있는 계열도 보자. 작은 RSA의 산술 골격은 다음과 같다.
 
@@ -1423,6 +2184,8 @@ python3 03_asymmetric/key_roles_lab.py rsa
 
 미래 위협에 대해서도 범위를 알아두자. 충분히 큰 오류 보정 양자컴퓨터를 가정하면 RSA와 기존 타원곡선의 난제는 안전성 기반이 약해진다. ML-KEM은 별도의 수학 기반을 사용하는 표준화된 post-quantum KEM이다. 이 책은 X25519로 key agreement 원리를 배우며, 이를 모든 미래 배포의 유일한 선택으로 권하지 않는다. [NIST FIPS 203](https://csrc.nist.gov/pubs/fips/203/final)
 
+</details>
+
 ### 10.8 Public key만 받았다고 신뢰할 수는 없다
 
 공격자도 자신의 key pair를 만들 수 있다.
@@ -1434,11 +2197,21 @@ Mallory가 "이게 example.com의 public key다"라고 주장
 
 수학적으로 유효한 public key라는 것과 특정 신원에 속한다는 것은 별개다. 이 간극을 인증서가 메운다.
 
+10장을 지나며 `public key`에 대한 그림은 하나의 자물쇠에서 **권한을 분리하는 여러 인터페이스**로 바뀌어야 한다. X25519 public key는 shared secret 합의에 참여하고, Ed25519 public key는 서명을 검증하며, RSA-OAEP public key는 제한된 데이터를 암호화할 수 있다. 공통점은 private 값을 공개하지 않고도 상대에게 어떤 연산 능력을 준다는 것이다.
+
+그러나 Mallory도 완벽히 유효한 key pair를 만들 수 있다. 우리가 얻은 public key가 정말 `shop.example`의 것이라는 보장은 아직 없다. 다음 장의 인증서는 새로운 암호화 알고리즘이 아니라, 바로 이 **이름과 key 사이의 끊어진 연결**을 메우는 서명된 문서다.
+
+> **10장 통과 기준:** X25519는 plaintext 암호화가 아니라 shared secret 합의라는 것, shared secret을 HKDF에 넣어 실제 AES key를 만든다는 것, key agreement만으로 상대 신원은 확인되지 않는다는 것, signature는 private으로 생성하고 public으로 검증한다는 것을 설명할 수 있으면 11장으로 이동한다. 군의 공리, 작은 DH 지수 계산, RSA의 Euler 정리는 첫 독서 통과 조건이 아니다.
+
 ---
 
 <a id="certificates"></a>
 
 ## 11. 인증서: 도메인과 public key를 연결하는 서명된 문서
+
+10장의 마지막에서 암호는 깨지지 않았는데도 중간자 공격이 성공했다. Mallory는 Alice나 Bob의 private key를 훔치지 않았다. 자신의 정상적인 key pair를 내밀며 상대인 척했을 뿐이다. 이 장에서는 계산이 아니라 **이름을 믿는 근거**를 추가한다. 브라우저가 `shop.example`이라는 이름과 서버 public key를 어떤 신뢰 사슬로 연결하는지 따라가 보자.
+
+**이 장에서 반드시 이해할 것:** 인증서는 비밀 파일이 아니라 `이 도메인 이름에는 이 public key가 연결된다`는 CA의 서명된 주장이다. 브라우저는 미리 가진 trust store에서 신뢰를 시작하고, 서버는 인증서에 대응하는 private key를 실제로 가졌음을 TLS handshake에서 증명한다.
 
 ### 11.1 인증서 이전에 남은 질문
 
@@ -1521,11 +2294,21 @@ chain 검증은 leaf에서 issuer로 올라가며 서명과 CA 제약 등을 확
 
 **확인 질문:** CA private, 서버 장기 private, 서버 ephemeral private는 같은 것인가? 아니다. 각각 인증서 발급, 접속 중 신원 증명, 연결용 비밀 합의에 쓰인다.
 
+이제 브라우저는 세 가지를 따로 말할 수 있다. `이 certificate chain은 내가 신뢰한 root로 이어진다`, `인증서의 이름은 내가 접속한 shop.example과 일치한다`, `현재 handshake 상대는 인증서 public key에 대응하는 private key를 실제로 보유한다`. 인증서는 암호문을 만들지 않았지만, **누구와 key agreement를 하는지**에 답했다.
+
+여기까지 배운 부품을 아직 직접 조립하지는 않았다. X25519, signature, certificate, HKDF, AES-GCM의 순서와 바이트 형식을 조금만 틀려도 새 공격이 생긴다. 다음 장에서는 이 부품들을 임의로 조합하지 않고, TLS 1.3이라는 이미 정의되고 분석된 protocol 안에서 한 연결의 시간순으로 다시 만난다.
+
+> **11장 통과 기준:** 인증서는 공개할 수 있고 private key는 별도 비밀이라는 것, root가 self-signed라서가 아니라 trust store에 들어 있어서 신뢰된다는 것, CA의 인증서 서명과 서버의 handshake 서명이 서로 다른 시점과 key를 사용한다는 것을 설명할 수 있으면 12장으로 이동한다.
+
 ---
 
 <a id="tls"></a>
 
 ## 12. 이제 TLS를 바텀업으로 조립한다
+
+이 장에서 처음 등장하는 핵심 primitive는 없다. 오히려 그 점이 중요하다. 지금까지 따로 배운 부품이 **어떤 순서로 서로의 약점을 메우는지** 보는 조립 장이다. 처음에는 handshake 그림을 한 번에 읽고, 두 번째 독서에서 각 화살표를 앞 장의 함수와 대응시킨다.
+
+**이 장에서 반드시 이해할 것:** TLS handshake는 서버 신원을 확인하고 양쪽이 traffic key를 만들게 한다. 이후 record protocol은 그 대칭키와 AEAD로 HTTP bytes를 암호화·인증한다. 인증서 public key가 HTTP body를 직접 암호화하는 것이 아니다.
 
 TLS 1.3은 크게 두 프로토콜로 생각할 수 있다.
 
@@ -1613,7 +2396,9 @@ HTTP request/response
 
 client Finished도 **handshake key**로 보호된다. application key를 파생할 수 있는 시점과 모든 인증 확인이 끝나 application data를 보내도 되는 시점은 구분한다. 실제 표준에는 더 많은 필드, transcript 처리, resumption, PSK, alerts 등이 있다. 위 그림은 구현용 명세가 아니라 역할을 분리하기 위한 지도다.
 
-### 12.3 ClientHello와 ServerHello: X25519 실습과 연결
+> **첫 읽기 경로:** 위 handshake 그림에서 `ephemeral key agreement → 인증서 서명 검증 → HKDF → 대칭 AEAD` 흐름을 잡았다면 [12.9절](#https-summary)로 이동한 뒤 12.11 실습을 실행해도 된다. 12.3~12.8은 각 화살표를 기존 실습과 연결하는 두 번째 독서다.
+
+### 12.3 두 번째 독서: ClientHello와 ServerHello — X25519 실습과 연결
 
 브라우저와 서버는 handshake마다 일회성(ephemeral) key pair를 만들 수 있다.
 
@@ -1631,7 +2416,7 @@ Server:  X25519(b, A)
 
 이것이 [`x25519_exchange.py`](03_asymmetric/x25519_exchange.py)에서 본 부분이다.
 
-### 12.4 인증서와 CertificateVerify: 중간자 공격을 막는다
+### 12.4 두 번째 독서: 인증서와 CertificateVerify — 중간자 공격을 막는다
 
 키 교환만으로는 Mallory가 public key share를 바꿀 수 있다. 서버는 handshake transcript에 certificate private key로 서명한다. 브라우저는 인증서 안의 검증 public key로 서명을 확인한다.
 
@@ -1661,7 +2446,7 @@ TLS 1.3에서 서버 인증서 public key가 HTTP body를 직접 암호화하는
 
 CA key가 RSA라고 key agreement까지 RSA가 되는 것도 아니다. CA의 인증서 서명 알고리즘, 서버 handshake 서명 알고리즘, ephemeral key agreement, record AEAD는 역할이 다르다.
 
-### 12.5 HKDF: 하나의 shared secret에서 여러 key를 만든다
+### 12.5 두 번째 독서: HKDF — 하나의 shared secret에서 여러 key를 만든다
 
 TLS는 shared secret 하나를 모든 곳에 그대로 쓰지 않는다. handshake transcript와 label을 포함해 서로 다른 secret/key를 파생한다.
 
@@ -1682,7 +2467,7 @@ TLS는 shared secret 하나를 모든 곳에 그대로 쓰지 않는다. handsha
 
 예를 들어 `TLS_AES_128_GCM_SHA256`에서 AES-128-GCM은 record 보호, SHA-256은 HKDF와 transcript hash 등에 사용된다. 이름만 보고 “매 HTTP body에 SHA-256 HMAC을 덧붙인다”거나 “key agreement가 RSA다”라고 읽으면 안 된다. TLS 1.3에서는 key agreement group과 signature algorithm을 별도로 협상한다.
 
-### 12.6 Record protocol: 우리가 배운 AES-GCM과 연결
+### 12.6 두 번째 독서: Record protocol — 우리가 배운 AES-GCM과 연결
 
 handshake가 끝나면 HTTP bytes를 TLS record로 나누고 AEAD로 보호한다.
 
@@ -1712,7 +2497,7 @@ sequence number는 key가 바뀔 때 초기화하고, 같은 key로 번호가 �
 
 tag 검증이 실패하면 record를 정상 데이터로 받아들이지 않는다. 이는 SQLite 실습에서 잘못된 key나 변경된 ciphertext가 `InvalidTag`를 만든 것과 같은 종류의 성질이다.
 
-### 12.7 Forward secrecy
+### 12.7 두 번째 독서: Forward secrecy
 
 ephemeral Diffie-Hellman private key를 연결 후 폐기하면, 미래에 서버의 certificate private key가 유출되더라도 과거에 녹화한 TLS 트래픽의 shared secret을 바로 복구할 수 없도록 설계할 수 있다. 이것이 forward secrecy의 핵심이다.
 
@@ -1720,13 +2505,15 @@ certificate private key는 당시 서버 신원을 증명하는 데 쓰였고, �
 
 단, 당시의 ephemeral secret이나 TLS key log가 이미 저장·유출되었으면 그 트래픽은 복호화될 수 있다. Forward secrecy는 “미래에 어떤 비밀이든 털려도 괜찮다”가 아니라 **장기 인증키의 사후 유출과 과거 session key를 분리**하는 성질이다.
 
-### 12.8 첫 접속 이후: resumption과 0-RTT의 경계
+### 12.8 선택 심화: 첫 접속 이후의 resumption과 0-RTT
 
 서버는 다음 접속을 위한 resumption 정보를 발급할 수 있다. PSK(pre-shared key)는 여기서 이전 연결에서 확립한 비밀을 기반으로 할 수 있으므로, 사용자가 처음부터 모든 서버와 key를 직접 나눠야 한다는 뜻은 아니다.
 
 0-RTT early data는 새 handshake가 완성되기 전의 데이터다. 일반적인 1-RTT application data와 replay/forward secrecy 성질이 같지 않다. 따라서 “TLS라서 결제 POST도 중복 실행될 수 없다”라고 추론하지 않는다. 이 책의 실습은 resumption과 early data를 사용하지 않는다. 세부 설계는 TLS 구현과 애플리케이션 정책의 영역으로 남긴다.
 
-### 12.9 HTTPS란 결국 무엇인가
+<a id="https-summary"></a>
+
+### 12.9 첫 독서 결론: HTTPS란 결국 무엇인가
 
 ```text
 HTTPS = HTTP over TLS
@@ -1767,7 +2554,457 @@ HTTP/3의 경우 TLS record를 UDP에 그대로 넣는 것이 아니다. QUIC이
 
 또한 TLS만으로 IP 주소, 트래픽의 크기·시간 등 모든 메타데이터를 숨기지는 않는다. URL path와 body가 암호화된다는 사실을 네트워크 익명성과 혼동하지 않는다.
 
-### 12.10 실제 TLS로 세 가지 가설을 검사한다
+<a id="tokens"></a>
+
+### 12.10 HTTPS 위의 로그인 상태: 세션, Bearer token, JWT
+
+TLS가 HTTP 바이트를 보호한다는 사실까지 이해하면 다음 질문이 남는다.
+
+> 사용자는 한 번 로그인한 뒤, 이후의 각 API 요청에서 자신이 이미 로그인했다는 사실을 어떻게 증명하는가?
+
+**이 절에서 반드시 이해할 것:** 로그인 성공 후에는 password 대신 새로 발급된 session credential을 사용한다. Bearer는 “가진 사람이 사용할 수 있다”는 사용 방식이고, JWT는 token 형식이다. OAuth access token은 JWT일 수도 있고 opaque token일 수도 있다.
+
+매 요청마다 password를 다시 보내고 Argon2id를 실행하는 것은 적절하지 않다. password는 장기 credential이며 노출 지점을 늘리면 안 되고, password KDF는 의도적으로 비싸기 때문이다. 서버는 최초 로그인에 성공하면 **세션을 나타내는 새로운 credential**을 발급한다.
+
+#### 12.10.1 로그인과 이후 API 호출은 서로 다른 단계다
+
+```text
+① 로그인
+
+사용자 앱 ── identifier + password ──→ 인증 서버
+                                      ├─ password verifier 검사
+                                      └─ 로그인 성공
+사용자 앱 ←──── 세션 cookie 또는 access token ─── 인증 서버
+
+
+② 이후 API 호출
+
+사용자 앱 ── 세션 cookie 또는 access token ──→ API 서버
+                                              ├─ credential 검증
+                                              ├─ 사용자·권한 확인
+                                              └─ 요청 처리
+```
+
+여기서 password는 최초 인증에 사용되고, 이후 요청은 발급된 세션 credential로 이어진다. 이 구분을 **최초 사용자 인증**과 **인증된 세션의 연속성**으로 생각할 수 있다.
+
+가장 단순한 server-side session은 다음처럼 동작한다.
+
+```text
+로그인 성공:
+    server가 random session_id 생성
+    server 저장소에 session_id → user_id, 만료, 상태 기록
+    browser에는 session_id가 든 cookie 전달
+
+이후 요청:
+    browser가 session cookie 전송
+    server가 session_id로 저장소 조회
+    user와 session 상태 복원
+```
+
+cookie에는 password를 넣지 않는다. 일반적으로 추측 불가능한 session identifier만 넣고 `Secure`, `HttpOnly`, 적절한 `SameSite` 속성을 사용한다. 이 방식은 뒤에서 설명할 opaque reference token과 닮았지만, browser가 cookie를 자동 첨부한다는 점 때문에 CSRF 모델과 방어가 함께 따라온다.
+
+#### 12.10.2 먼저 네 용어를 서로 분리하자
+
+`access token`, `Bearer`, `JWT`, `opaque token`은 같은 분류 기준의 경쟁 단어가 아니다.
+
+| 용어 | 답하는 질문 |
+|---|---|
+| access token | 이 값은 무엇을 하기 위한 credential인가? |
+| Bearer token | 이 값을 사용할 때 별도의 key 소유 증명이 필요한가? |
+| JWT | 토큰 내부 데이터는 어떤 형식으로 표현되는가? |
+| opaque token | 토큰을 받은 client가 내부 의미를 해석할 수 있는가? |
+
+따라서 다음 조합이 모두 가능하다.
+
+```text
+JWT access token + Bearer 방식
+opaque access token + Bearer 방식
+JWT이지만 access token이 아닌 ID token
+JWT이지만 Bearer 방식이 아닌 별도 proof와 결합된 token
+```
+
+`JWT`, `Bearer`, `OAuth`를 동의어로 사용하면 설계를 추적할 수 없게 된다.
+
+OAuth는 token의 바이트 형식을 정의하는 이름이 아니라, 사용자가 자신의 password를 제3자 client에 넘기지 않고 제한된 resource 접근 권한을 위임하는 framework다.
+
+```text
+Resource Owner:       권한을 가진 사용자
+Client:               사용자를 대신해 API를 사용하려는 앱
+Authorization Server: 사용자 동의를 확인하고 access token을 발급
+Resource Server:      access token을 받고 보호된 API를 제공
+```
+
+```text
+사용자(Resource Owner)
+        │ 권한 위임
+        ▼
+Client ── authorization grant ──→ Authorization Server
+Client ←────── access token ───── Authorization Server
+Client ─────── access token ────→ Resource Server
+Client ←──── protected resource ─ Resource Server
+```
+
+OAuth access token은 JWT일 수도 있고 opaque token일 수도 있다. OAuth 자체는 둘 중 하나를 강제하지 않는다. 반대로 JWT를 사용한다고 그 시스템이 자동으로 OAuth가 되는 것도 아니다.
+
+#### 12.10.3 Bearer token은 무엇인가
+
+`bearer`는 “소지자”라는 뜻이다. Bearer token은 **그 값을 소지하고 제시하는 것만으로 사용할 수 있는 token**이다. 별도의 private key를 가지고 있다는 증명은 요구하지 않는다.
+
+```http
+GET /patients HTTP/1.1
+Host: api.example.com
+Authorization: Bearer eyJhbGciOi...
+```
+
+서버는 `Bearer` 뒤의 token을 검증하고 허용된 resource를 반환한다. [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.html)은 token을 가진 누구든 사용할 수 있으므로 저장과 전송 과정에서 노출되지 않도록 보호해야 한다고 정의한다.
+
+```text
+정상 사용자에게 token이 있음
+    → 사용 가능
+
+공격자가 token을 복사함
+    → 만료·폐기·추가 통제가 없다면 공격자도 사용 가능
+```
+
+따라서 Bearer token은 반드시 HTTPS로 전송하고, 로그·URL·오류 메시지·분석 도구에 남기지 않도록 해야 한다. 일반적으로 query string보다 `Authorization` header를 사용한다. 브라우저에서 어디에 보관할지는 XSS와 CSRF를 함께 고려해야 하는 별도 설계 문제다.
+
+세션 cookie도 흔히 “그 cookie를 가진 쪽이 세션을 사용한다”는 점에서는 소지 기반 credential이다. 다만 `Authorization: Bearer`라는 HTTP 인증 scheme으로 전달되는 OAuth Bearer access token과 cookie 기반 세션을 용어상 동일시하지는 않는다.
+
+#### 12.10.4 HS256은 보통 API 요청 자체에 서명하는 것이 아니다
+
+JWT access token을 사용하는 전형적인 흐름은 다음과 같다.
+
+```text
+① 로그인·token 발급
+
+사용자 앱 ── identifier/password 또는 OAuth grant ──→ 인증 서버
+사용자 앱 ←────────── JWT access token ────────────── 인증 서버
+                                              └─ JWT bytes에 MAC/서명
+
+
+② API 호출
+
+사용자 앱 ── Authorization: Bearer <JWT> ──→ API 서버
+                                                └─ JWT 검증 후 처리
+```
+
+사용자 앱은 일반적으로 매번 다음 HTTP 요청 전체를 HS256으로 계산하지 않는다.
+
+```text
+GET /patients
+request headers
+request body
+```
+
+인증 서버가 HS256으로 보호한 대상은 **JWT token의 header와 payload**다. 사용자 앱은 발급받은 token 문자열을 그대로 API 요청에 실어 보낸다.
+
+```text
+HS256이 인증하는 것:
+    JWT header || "." || JWT payload
+
+일반적인 Bearer token이 인증하지 않는 것:
+    이번 HTTP method, path, body 전체
+```
+
+그러므로 Bearer access token을 훔친 공격자는 token을 자신의 다른 API 요청에 붙여 재사용할 수 있다. HTTP 요청 자체를 key에 묶는 webhook HMAC, HTTP Message Signatures, proof-of-possession 방식은 Bearer token과 다른 프로토콜이다.
+
+#### 12.10.5 JWT는 무엇인가
+
+JWT(JSON Web Token)는 JSON claims를 URL-safe한 token으로 표현하는 형식이다. 흔히 보는 compact JWS 형태는 점(`.`)으로 나뉜 세 부분이다. [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519.html)
+
+```text
+base64url(header) . base64url(payload) . base64url(signature-or-MAC)
+```
+
+예를 들면 다음과 같은 논리 구조다.
+
+```json
+header = {
+  "typ": "at+jwt",
+  "alg": "RS256",
+  "kid": "key-2026-09"
+}
+
+payload = {
+  "iss": "https://auth.example.com",
+  "sub": "user-123",
+  "aud": "https://api.example.com",
+  "scope": "patients:read",
+  "iat": 1790400000,
+  "exp": 1790400900,
+  "jti": "5fd4..."
+}
+```
+
+주요 claim의 역할은 다음과 같다.
+
+| claim | 의미 | 검증 질문 |
+|---|---|---|
+| `iss` | issuer | 내가 신뢰하도록 설정한 인증 서버가 발급했는가? |
+| `sub` | subject | 누구에 관한 token인가? |
+| `aud` | audience | 이 API 서버가 사용 대상으로 지정됐는가? |
+| `exp` | expiration time | 아직 만료되지 않았는가? |
+| `iat` | issued at | 언제 발급됐는가? |
+| `nbf` | not before | 사용 가능 시점이 지났는가? |
+| `jti` | JWT identifier | 이 token 인스턴스의 식별자는 무엇인가? |
+| `scope` | 위임된 권한 범위 | 이 API 동작에 필요한 권한이 있는가? |
+
+여기서 Base64url은 암호화가 아니다. header와 payload는 token을 얻은 누구나 decode해 읽을 수 있다.
+
+```text
+Base64url decode 가능
+    ≠ 위조 가능
+    ≠ 기밀성 제공
+```
+
+서명 또는 MAC은 payload를 숨기는 것이 아니라, 보호된 bytes가 발급 후 바뀌지 않았음을 검증하게 한다. 민감정보를 “서명된 JWT니까 안전하다”고 넣으면 안 된다. 기밀성이 필요하면 별도의 암호화 설계가 필요하다.
+
+> **첫 읽기 경로:** JWT가 `header.payload.signature-or-MAC` 형식이고 payload는 읽을 수 있다는 것까지 이해했다면 [opaque token 설명](#opaque-token)으로 이동해 중앙 저장 방식과 비교한다. 다음 세 절은 JWT를 실제로 채택하거나 검토할 때 돌아오는 선택 심화다.
+
+<details>
+<summary><strong>선택 심화 펼치기:</strong> HS256, 공개키 서명 JWT, claim 검증</summary>
+
+#### 12.10.6 선택 심화: HS256 JWT는 HMAC을 어디에 쓰는가
+
+HS256은 HMAC-SHA256을 사용해 JWS compact serialization을 보호한다.
+
+```text
+signing_input =
+    base64url(header)
+    || "."
+    || base64url(payload)
+
+mac = HMAC-SHA256(shared_secret, signing_input)
+
+jwt = signing_input || "." || base64url(mac)
+```
+
+이 장에서 배운 HMAC을 그대로 사용하므로 `SHA256(key || message)`의 length-extension 취약 구성이 아니다.
+
+JOSE/JWT 문서와 라이브러리는 마지막 부분을 관용적으로 `signature` 또는 “HS256 서명”이라고 부른다. 그러나 암호학적 권한 구조로 보면 HS256은 **공유키 MAC**이다.
+
+```text
+인증 서버:
+    shared_secret 보유
+    → JWT 생성 가능
+
+API 서버:
+    같은 shared_secret 보유
+    → JWT 검증 가능
+    → 동시에 새 JWT 생성도 가능
+```
+
+즉 검증 권한과 발급 권한이 분리되지 않는다. API 서버 하나가 침해되어 shared secret이 유출되면 공격자는 다른 사용자의 token도 만들 수 있다. HS256 key에는 사람이 기억하는 password를 쓰지 않고 충분한 entropy를 가진 secret을 사용해야 한다. [RFC 8725 §3.5](https://www.rfc-editor.org/rfc/rfc8725.html#section-3.5)
+
+작은 단일 backend처럼 발급자와 검증자가 사실상 같은 trust boundary에 있다면 HS256이 항상 잘못된 선택은 아니다. 그러나 여러 독립 API 서버에 검증 권한만 배포하려는 구조에서는 권한 분리가 어렵다.
+
+#### 12.10.7 선택 심화: 공개키 서명 JWT는 발급과 검증 권한을 분리한다
+
+비대칭 서명을 사용하면 인증 서버만 private key를 보유하고 API 서버에는 public key만 배포할 수 있다.
+
+```text
+인증 서버
+├─ private key 보유
+└─ JWT 생성·서명 가능
+
+API server A ─┐
+API server B ─┼─ public key만 보유 → 검증 가능, 새 서명 생성 불가
+API server C ─┘
+```
+
+예를 들어 `RS256`, `ES256`, `EdDSA`는 서로 다른 공개키 서명 계열이다. 이름에 `256`이 들어간다고 모두 같은 연산은 아니다.
+
+- `HS256`: HMAC-SHA256, 공유 secret
+- `RS256`: RSA PKCS#1 v1.5 signature + SHA-256
+- `ES256`: ECDSA P-256 + SHA-256
+- `EdDSA`: JOSE에서 사용하는 Edwards-curve 서명 계열
+
+OAuth JWT access token profile인 [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068.html)은 JWT access token의 서명을 요구하고, resource server가 검증 정보를 쉽게 얻도록 비대칭 알고리즘 사용을 권장한다. 이는 “모든 JWT는 언제나 비대칭이어야 한다”는 일반 명제가 아니라, **OAuth JWT access token profile에서 여러 resource server가 검증하는 구조**에 대한 권고다.
+
+인증 서버는 public key들을 HTTPS의 JWKS(JSON Web Key Set) endpoint로 공개할 수 있다. JWT header의 `kid`는 여러 public key 중 검증에 사용할 후보를 찾는 식별자다. `kid` 자체가 key의 신뢰성을 증명하지는 않는다. API 서버는 사전에 신뢰하도록 설정한 issuer와 JWKS 위치에서만 key를 받아야 한다.
+
+#### 12.10.8 선택 심화: JWT 검증은 signature 확인 하나로 끝나지 않는다
+
+다음 코드는 충분하지 않다.
+
+```text
+signature가 맞다
+    → 무조건 요청 허용          # 잘못된 결론
+```
+
+API 서버는 적어도 다음 정책을 함께 검사해야 한다.
+
+```text
+1. 허용하기로 설정한 algorithm인가?
+2. 신뢰하는 issuer의 올바른 key로 signature/MAC이 검증되는가?
+3. iss가 기대한 issuer와 정확히 일치하는가?
+4. aud에 현재 API가 포함되는가?
+5. exp가 지나지 않았고 nbf 조건을 만족하는가?
+6. 이 token의 type과 목적이 access token 검증 규칙에 맞는가?
+7. 필요한 scope/role이 있는가?
+8. 계정·tenant·resource에 대한 애플리케이션 authorization도 통과하는가?
+```
+
+token header가 주장하는 `alg`를 그대로 신뢰해서는 안 된다. 서버 설정이 허용하는 algorithm 목록을 고정하고, 다른 algorithm과 `none`은 거부한다. ID token과 access token처럼 목적이 다른 JWT도 서로 다른 검증 규칙으로 분리한다. [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html)
+
+```text
+authentication:
+    이 token이 신뢰하는 issuer가 발급한 user-123의 token인가?
+
+authorization:
+    user-123이 이 patient record를 읽을 수 있는가?
+```
+
+유효한 JWT라고 해서 모든 resource 접근이 자동으로 허용되는 것은 아니다.
+
+</details>
+
+<a id="opaque-token"></a>
+
+#### 12.10.9 opaque token은 일반 난수인가
+
+실무의 흔한 opaque access token은 CSPRNG로 만든 충분히 긴 임의 문자열이다.
+
+```text
+token = CSPRNG(32 bytes)
+```
+
+서버는 token에 대응하는 상태를 저장한다.
+
+```text
+token record
+├─ token_hash
+├─ user_id
+├─ client_id
+├─ scopes
+├─ expires_at
+└─ revoked_at
+```
+
+client가 보는 token에는 해석할 claims가 없다.
+
+```text
+qN7v3v6F...무작위처럼 보이는 값...
+```
+
+API 서버는 다음 방법 중 하나로 검사한다.
+
+```text
+방법 A: 공유 token 저장소에서 record 조회
+
+방법 B: 인증 서버의 introspection endpoint에 문의
+        "이 token이 active인가? 누구의 어떤 권한인가?"
+```
+
+OAuth token introspection의 표준 인터페이스는 [RFC 7662](https://www.rfc-editor.org/rfc/rfc7662.html)에 정의되어 있다.
+
+DB에는 원본 Bearer token 대신 `SHA256(token)`을 lookup key로 저장할 수 있다.
+
+```text
+발급:
+    raw_token = CSPRNG(32 bytes)
+    DB 저장   = SHA256(raw_token)
+    client 전달 = raw_token
+
+검증:
+    presented_token 수신
+    lookup_key = SHA256(presented_token)
+    DB에서 lookup_key 조회
+```
+
+여기서 빠른 SHA-256을 써도 되는 이유는 token이 사람이 정한 낮은 entropy의 password가 아니라, CSPRNG가 만든 충분히 긴 난수이기 때문이다. DB가 유출되어 hash를 얻어도 공격자가 256-bit token 후보를 사전 대입하는 것은 현실적으로 불가능하다.
+
+단, `opaque`의 정의 자체가 “반드시 순수 난수”라는 뜻은 아니다. client가 내부 구조와 의미를 알 수 없는 reference token이라는 성질이 핵심이다. 난수 reference가 흔하고 단순한 구현이다.
+
+#### 12.10.10 JWT와 opaque token의 운영상 차이
+
+| 항목 | 서명된 JWT access token | opaque reference token |
+|---|---|---|
+| API 검증 | signature와 claims를 로컬 검증 가능 | 저장소 조회 또는 introspection 필요 |
+| 인증 서버 의존 | 매 요청 직접 문의하지 않아도 됨 | 검증 경로가 저장소/인증 서버에 의존 |
+| 즉시 폐기 | 별도 denylist/state 없으면 어려움 | record를 revoke하면 반영하기 쉬움 |
+| 권한 변경 반영 | 기존 token 만료 전까지 옛 claim이 남을 수 있음 | 중앙 record 변경을 즉시 반영 가능 |
+| client의 내용 열람 | payload를 decode해 읽을 수 있음 | 내부 의미를 알 수 없음 |
+| 정보 크기 | claims·서명 때문에 비교적 큼 | 보통 짧은 reference 값 |
+| key 배포 | 검증 key의 배포·rotation 필요 | token 저장소의 접근·가용성 관리 필요 |
+
+JWT를 “DB 조회가 전혀 없는 token”이라고 단정하면 안 된다. 계정 정지, tenant 상태, 세밀한 resource authorization을 확인하기 위해 결국 DB를 조회할 수도 있다. 반대로 opaque token도 API gateway가 검증 결과를 짧게 cache할 수 있다.
+
+JWT는 자동으로 더 안전하거나 더 현대적인 선택이 아니다. 중앙 상태 조회를 줄이는 대신 즉시 취소와 권한 변경 반영이 어려워지는 trade-off가 있다.
+
+#### 12.10.11 access token, refresh token, ID token을 혼동하지 않는다
+
+OAuth/OIDC 시스템에서는 서로 다른 token이 동시에 나타날 수 있다.
+
+| token | 받는 쪽과 목적 | 일반적인 제출 대상 |
+|---|---|---|
+| access token | resource에 접근할 권한 | API/resource server |
+| refresh token | 새 access token을 발급받기 위한 장기 credential | authorization server |
+| ID token | 사용자가 인증됐다는 정보를 client에 전달 | OIDC client |
+
+```text
+access token:
+    API를 호출하기 위한 credential
+
+refresh token:
+    access token을 새로 받기 위한 credential
+    일반 API에 보내지 않음
+
+ID token:
+    client가 로그인 결과를 확인하기 위한 token
+    access token 대신 API에 보내는 값이 아님
+```
+
+세 token 모두 JWT일 수도 있지만 반드시 그런 것은 아니다. **JWT는 형식이고, access/refresh/ID는 프로토콜 안에서의 역할**이기 때문이다.
+
+#### 12.10.12 작은 서비스에서는 무엇을 선택하는가
+
+설계의 출발점은 “JWT를 쓸까?”가 아니라 trust boundary와 폐기 요구사항이다.
+
+```text
+동일한 browser와 단일 backend:
+    server-side session + Secure/HttpOnly/SameSite cookie가 단순하다.
+
+작은 API이고 중앙 조회가 문제되지 않음:
+    opaque random token도 자연스럽다.
+
+인증 서버와 여러 resource server가 분리됨:
+    비대칭 서명 JWT를 사용하면 검증 public key만 배포할 수 있다.
+
+하나의 작은 trust boundary에서 HS256을 사용:
+    가능하지만 shared secret을 가진 모든 검증자가 발급도 가능함을 받아들여야 한다.
+```
+
+어떤 방식을 사용하더라도 access token은 짧게 만료시키고, refresh token은 더 강하게 보호·rotation하며, TLS·로그 마스킹·key rotation·정확한 claim 검증을 함께 설계한다. 검증된 프레임워크와 라이브러리를 사용하고 JWT parsing·서명 검증을 직접 구현하지 않는다.
+
+#### 12.10.13 이 절의 핵심
+
+```text
+Bearer
+    → 가진 사람이 쓸 수 있다는 사용 방식
+
+JWT
+    → claims를 담는 token 형식
+
+opaque token
+    → client가 내부 의미를 해석하지 못하는 reference token
+
+HS256
+    → JWT bytes에 HMAC-SHA256을 적용하는 공유키 방식
+
+공개키 서명 JWT
+    → 인증 서버만 private key로 발급하고 API는 public key로 검증
+```
+
+그리고 처음 질문으로 돌아가면:
+
+> HS256으로 보호하는 대상은 일반적으로 매번의 API 요청 전체가 아니라 요청에 실어 보내는 JWT access token이다. client는 그 token을 `Authorization: Bearer ...`로 제시한다. Bearer token은 소지 자체가 사용 권한이므로 탈취에 약하며, TLS와 안전한 저장이 필수다.
+
+**확인 문제:** `HS256 JWT`, `Bearer token`, `OAuth access token`이 왜 동의어가 아닌지 설명하자. 그리고 API server 세 곳에 HS256 secret을 배포했을 때 어느 서버가 새 token을 만들 수 있는지 답하자.
+
+> **Token 절 통과 기준:** Bearer는 형식이 아니라 소지 기반 사용 방식이라는 것, JWT payload는 암호화가 아니므로 읽을 수 있다는 것, opaque token은 서버 상태를 가리키는 추측 불가능한 reference가 될 수 있다는 것을 설명할 수 있으면 충분하다. 두 번째 독서에서는 HS256 secret을 가진 검증자가 token 생성도 가능하다는 권한 경계까지 확인한다. 모든 JWT claim을 암기할 필요는 없다.
+
+### 12.11 실제 TLS로 세 가지 가설을 검사한다
 
 ```bash
 python3 04_tls/tls_memory_lab.py
@@ -1785,235 +3022,282 @@ python3 04_tls/tls_memory_lab.py
 
 코드와 연결: [D.11 — `temporary_pki()`와 `run_connection()`](#trace-tls).
 
+12장을 끝내며 머릿속에는 한 줄의 파이프가 아니라 두 층이 보여야 한다. Handshake는 인증된 상대와 traffic key를 확립하고, record protocol은 그 key로 HTTP bytes를 계속 보호한다. HTTP의 method·path·cookie·Bearer token은 TLS 안에서 이동하지만, TLS endpoint에 도착하면 애플리케이션이 읽을 수 있는 bytes로 돌아온다. 바로 그 지점부터는 다음 부의 시스템 설계가 책임을 이어받는다.
+
+> **12장 통과 기준:** TLS가 서버 인증, key agreement, key derivation, record AEAD를 조립한 protocol이라는 것, HTTP는 handshake 후 만들어진 대칭 traffic key로 보호된다는 것, TLS가 서버 내부 저장이나 애플리케이션 replay까지 자동으로 해결하지 않는다는 것을 설명할 수 있으면 13장으로 이동한다. Handshake secret tree와 record nonce 계산을 외울 필요는 없다.
+
 ---
 
-## 13. 실제 웹 아키텍처에서는 TLS가 어디서 끝나는가
+# 제5부. 함수가 아니라 시스템을 보호한다
 
-현대 서비스에서는 애플리케이션 프로세스가 직접 인터넷 TLS를 종료하지 않을 수 있다.
+TLS handshake가 성공했다고 이야기는 끝나지 않는다. 실제 요청은 CDN, load balancer, 애플리케이션, KMS, DB를 차례로 지나며 여러 번 평문이 되고 다시 보호된다. 마지막 부에서는 카메라를 함수 내부에서 시스템 전체로 당긴다. 이제 질문은 `AES-GCM이 안전한가?`가 아니라 `이 값이 다음 신뢰 경계를 건널 때 누가 볼 수 있는가?`다.
+
+## 13. TLS는 어디까지 보호하는가 — 연결에는 끝점이 있다
+
+브라우저 주소창의 자물쇠는 `브라우저에서 어떤 서버 프로세스까지`의 연결을 말한다. 현대 서비스에서 그 프로세스는 애플리케이션이 아니라 CDN, WAF, load balancer, API gateway 또는 Kubernetes ingress일 수 있다. **TLS는 조직 전체를 덮는 막이 아니라 두 endpoint 사이에 생긴 secure channel**이다.
 
 ```text
 Browser
-   │ HTTPS
+   │ TLS connection A
    ▼
 CDN / WAF / Load Balancer / Ingress
-   │ 내부 TLS 또는 mTLS
+   │ TLS connection B 또는 보호되지 않은 내부 연결
    ▼
 Application Service
-   │ TLS
+   │ TLS connection C
    ▼
 Database / other service
 ```
 
-### 13.1 TLS termination
+### 13.1 TLS termination에서 실제로 일어나는 일
 
-브라우저의 TLS 연결이 load balancer에서 종료되면 load balancer는 HTTP plaintext를 볼 수 있다. 이는 기능상 필요할 수 있다.
+브라우저가 보낸 TLS record는 첫 번째 endpoint에서 tag 검증과 복호화를 거친다. 그 endpoint는 routing, WAF 검사, HTTP header 추가 등을 하려면 HTTP plaintext를 볼 수 있어야 한다. 이것을 TLS termination이라고 한다.
 
 ```text
-Browser ↔ [TLS] ↔ Load Balancer ↔ [별도 연결] ↔ App
+Browser ── ciphertext A ──→ Load Balancer
+                              │ decrypt
+                              ▼
+                         HTTP plaintext
+                              │ 새 연결에서 다시 encrypt
+                              ▼
+App     ←─ ciphertext B ──────┘
 ```
 
-따라서 “HTTPS를 쓴다”는 말만으로 load balancer 이후 구간까지 자동 보호되는 것은 아니다. 내부 구간도 TLS로 다시 연결하거나, 서비스 간 mTLS를 적용하거나, 신뢰 경계와 네트워크 정책으로 보호해야 한다.
+여기서 A와 B는 하나의 긴 TLS tunnel이 아니다. 서로 다른 handshake, certificate, traffic key, sequence number를 가진 **독립된 두 연결**이다. Load balancer는 두 연결 사이에서 plaintext를 보는 trusted intermediary다. 따라서 “인터넷 구간에 HTTPS를 켰다”와 “애플리케이션까지 모든 hop이 암호화됐다”는 같은 문장이 아니다.
 
-### 13.2 mTLS
+TLS 종단은 private key뿐 아니라 복호화된 request body, cookie, Bearer token을 볼 수 있다. Access log나 tracing system이 이 값을 기록하면 전송 암호화는 정상이어도 다른 저장소에서 secret이 유출된다. 그래서 종단의 운영 권한, 로그 마스킹, 내부 연결, 인증서 배포가 모두 trust boundary 설계에 포함된다.
 
-일반 웹 TLS는 서버가 인증서로 자신을 증명하고, 사용자는 그 후 HTTP 레벨의 password/session/OAuth 등으로 인증하는 경우가 많다.
+### 13.2 내부 TLS와 mTLS는 무엇을 더하는가
 
-mTLS에서는 client도 인증서를 제시해 TLS 단계에서 상호 인증한다.
+Load balancer와 app 사이에 TLS connection B를 만들면 그 hop의 네트워크 도청·변조를 막을 수 있다. mTLS(mutual TLS)는 여기에 client certificate 검증을 추가한다.
 
 ```text
-일반 HTTPS:
+일반적인 browser HTTPS:
 browser verifies server certificate
 
-mTLS:
-client verifies server certificate
-server verifies client certificate
+service-to-service mTLS:
+client service verifies server certificate
+server service verifies client certificate
 ```
 
-서비스 간 통신, 관리 plane, 고보안 B2B 연동에서 사용할 수 있지만 인증서 발급·rotation·revocation 운영이 필요하다.
+mTLS가 확인하는 것은 보통 `이 연결의 client가 어떤 workload certificate를 소유하는가`다. 최종 사용자 Alice의 로그인 상태나 `Alice가 이 row를 읽을 권한이 있는가`까지 자동으로 증명하지 않는다. Workload identity와 end-user identity는 서로 다른 층이며, 애플리케이션 authorization은 여전히 필요하다.
+
+또한 mTLS는 무료 보안 스위치가 아니다. 누가 인증서를 발급하는지, private key를 어디에 두는지, 짧은 수명의 인증서를 어떻게 rotation하는지, 폐기와 장애를 어떻게 처리할지 운영 체계가 필요하다. 네트워크 위치만 신뢰하는 것보다 강한 신원을 줄 수 있지만 그 신원의 수명주기를 떠안는다.
+
+이 장에서 가져갈 그림은 선명하다. **자물쇠를 보면 먼저 양쪽 endpoint를 손가락으로 짚는다.** 그 사이만 TLS가 직접 보호한다. 다음 장에서는 그 endpoint에서 평문이 된 API token이 DB에 들어가고 다시 사용되는 전 과정을 따라간다.
+
+> **13장 통과 기준:** browser→load balancer와 load balancer→app이 서로 다른 TLS 연결일 수 있다는 것, TLS 종단은 HTTP plaintext를 볼 수 있다는 것, mTLS의 workload 인증이 최종 사용자 authorization을 대체하지 않는다는 것을 설명할 수 있으면 14장으로 이동한다.
 
 ---
 
-## 14. 저장 암호화와 HTTPS를 하나의 요청으로 연결하기
+## 14. 하나의 API token이 저장되고 다시 사용되기까지
 
-사용자가 웹 UI에서 외부 API token을 등록하는 과정을 보자.
+이제 책의 처음에 맡겨 둔 `shop.example`의 외부 API token으로 돌아오자. 지금까지의 모든 부품을 한 요청의 시간순으로 놓아 보면 저장 암호화와 HTTPS가 경쟁 기술이 아니라 **서로 다른 구간을 맡은 보호 장치**임이 보인다.
 
-```text
-1. Browser
-   사용자가 token 입력
+### 14.1 등록 요청: plaintext는 어디에서 나타나는가
 
-2. HTTPS/TLS
-   브라우저와 TLS endpoint 사이에서 token 전송 보호
-
-3. Application
-   요청을 처리하는 순간 token plaintext가 메모리에 존재
-
-4. Application-level encryption
-   DEK 또는 application key로 AES-GCM 암호화
-
-5. Database
-   nonce + ciphertext/tag + wrapped DEK/key version 저장
-
-6. Later use
-   KMS/Vault 권한으로 key 획득 또는 unwrap
-   DB ciphertext 복호화
-   token을 외부 API 호출에 잠시 사용
-```
-
-각 층의 역할은 다르다.
+Alice가 브라우저에 token을 입력하고 저장 버튼을 누른다.
 
 ```text
-TLS:
-브라우저에서 서버까지 이동 중인 token 보호
-
-DB/storage encryption:
-디스크와 snapshot 보호
-
-Application field encryption:
-DB에 저장된 token을 DB 단독 유출에서 보호
-
-KMS/Vault/Secret Manager:
-복호화 권한과 key lifecycle 관리
+① Browser memory
+   token plaintext
+       │ HTTP request bytes
+       ▼
+② Browser↔TLS endpoint
+   TLS traffic key로 record 보호
+       │ endpoint에서 decrypt
+       ▼
+③ Application memory
+   인증·인가와 입력 검사를 위해 token plaintext 사용
+       │ AES-GCM(K, nonce, token, AAD)
+       ▼
+④ Database
+   record_id, key_version, nonce, ciphertext||tag 저장
 ```
 
-어느 하나가 다른 것을 완전히 대체하지 않는다.
+TLS는 ②의 이동을 보호한다. 그러나 애플리케이션이 값을 처리하려면 ③에서 plaintext가 존재한다. 이것은 암호화 실패가 아니라 요구사항의 결과다. 앱이 token을 한 번도 볼 수 없어야 한다면, 일반적인 server-side 사용 모델이 아니라 client-side/end-to-end encryption 또는 별도의 실행 경계를 설계해야 한다.
+
+AES-GCM을 호출하기 전에 앱은 현재 인증된 user/tenant와 이 record의 용도를 알고 있다. 이 신뢰한 문맥으로 AAD를 만든다. DB에서 읽은 `owner_id`를 아무 검증 없이 되돌려 AAD로 쓰는 대신, 현재 authorization 결과와 예상 record identity를 묶어야 한다.
+
+```text
+K: application key 또는 unwrap한 DEK — 비밀
+N: 이번 암호화를 위한 nonce — DB 저장 가능
+P: 외부 API token — 암호화 전후 앱 메모리에서 수명 최소화
+AAD: tenant/record/type/version 문맥 — 공개 가능, 정확히 재구성 필요
+C||T: ciphertext와 tag — DB 저장
+```
+
+스토리지 계층의 disk encryption은 DB 파일과 snapshot을 보호할 수 있다. 애플리케이션 field encryption은 SQL dump에 ciphertext만 남게 한다. 둘은 공격 지점이 다르므로 함께 존재할 수 있다.
+
+### 14.2 나중의 사용: 복호화 권한은 어떻게 행사되는가
+
+Worker가 외부 API를 호출할 시간이 되면 흐름은 반대로 진행된다.
+
+```text
+⑤ Worker가 workload identity로 KMS/Vault 권한 획득
+⑥ DB에서 nonce, ciphertext/tag, wrapped DEK, metadata 조회
+⑦ KMS로 DEK unwrap 또는 허용된 key 획득
+⑧ 기대 AAD로 AES-GCM tag 검증 후 token 복호화
+⑨ token을 외부 서비스의 HTTPS 요청에 사용
+⑩ plaintext와 DEK reference의 수명을 줄이고 로그에는 남기지 않음
+```
+
+⑦에서 KMS가 raw KEK를 내주지 않아도 Worker는 unwrap/decrypt 권한을 행사한다. 그러므로 Worker가 완전히 장악되면 공격자는 같은 API를 호출할 수 있다. 반대로 DB dump만 훔친 공격자는 KMS 권한이 없어 token을 복구하지 못하는 것이 이 구조의 목표다.
+
+⑨에는 새로운 TLS 연결이 생긴다. 사용자의 browser→shop 연결에서 쓴 traffic key나 DB field key를 재사용하지 않는다. 외부 서비스와의 TLS가 token을 이동 중에 보호하고, 외부 서비스는 결국 token plaintext를 받아 사용한다.
+
+이 전체 흐름에서 `암호화된 상태`와 `평문 상태`가 번갈아 나타난다. 좋은 설계는 plaintext가 영원히 사라진다고 약속하지 않는다. **필요한 endpoint에서만, 필요한 시간 동안만 나타나도록 권한과 관찰 가능성을 줄인다.**
+
+> **14장 통과 기준:** 한 token에 대해 TLS traffic key, field-encryption key/DEK, KMS KEK가 서로 다른 key인 이유와 token plaintext가 나타나는 지점을 순서대로 설명할 수 있으면 15장으로 이동한다.
 
 ---
 
-## 15. 위협별로 무엇이 보호되는가
+## 15. 위협 모델로 다시 읽는 전체 구조
 
-| 공격/사고 | TLS | 스토리지 암호화 | 앱 필드 암호화 + 외부 KMS | 비고 |
+지금까지는 정상 흐름을 따라갔다. 이제 공격자가 한 구성요소씩 가져간다고 가정하자. 이 장의 표는 제품 기능 비교표가 아니라 **공격자가 어느 경계를 넘었는지 추적하는 지도**다. 각 행을 읽을 때 `공격자가 가진 것`과 `아직 없는 것`을 함께 말해야 한다.
+
+| 공격/사고 | TLS | 스토리지 암호화 | 앱 필드 암호화 + 외부 KMS | 남는 판단 |
 |---|---:|---:|---:|---|
-| 네트워크 패킷 도청 | 보호 | 무관 | 무관 | TLS 종단 사이 |
-| 네트워크 내용 변조 | 보호 | 무관 | 무관 | TLS tag/handshake 검증 |
-| 물리 디스크/스냅샷 단독 유출 | 일부 무관 | 보호 | 보호 가능 | key 분리가 전제 |
-| SQL dump 유출 | 무관 | 대개 부족 | 보호 가능 | ciphertext만 유출된 경우 |
-| DB 관리자 계정 오용 | 무관 | 대개 부족 | 보호 가능 | 앱이 별도 key 권한 보유 시 |
-| 애플리케이션 RCE | 부족 | 부족 | 대개 부족 | 앱의 정상 복호화 권한 악용 가능 |
-| KMS 권한만 유출 | 무관 | 무관 | 데이터 없으면 제한적 | DB와 결합 시 위험 |
-| DB와 KMS 권한 동시 유출 | 무관 | 부족 | 복호화 가능 | 권한 분리와 탐지가 중요 |
-| 사용자 단말 악성코드 | 부족 | 무관 | 무관 | plaintext 입력 시점 노출 가능 |
+| 네트워크 패킷 도청 | 보호 | 무관 | 무관 | 정확한 TLS endpoint 사이에서만 |
+| 네트워크 내용 변조 | 보호 | 무관 | 무관 | 인증서·tag 검증을 끄지 않아야 함 |
+| 물리 디스크/스냅샷 단독 유출 | 무관 | 보호 | 보호 가능 | key가 snapshot과 분리돼야 함 |
+| SQL dump 유출 | 무관 | 대개 부족 | 보호 가능 | ciphertext와 KMS 권한이 분리된 경우 |
+| DB 관리자 계정 오용 | 무관 | 대개 부족 | 보호 가능 | 앱만 별도 decrypt 권한을 가진 경우 |
+| 애플리케이션 RCE | 부족 | 부족 | 대개 부족 | 앱의 정상 복호화 권한을 악용 가능 |
+| KMS 권한만 유출 | 무관 | 무관 | 데이터 없이는 제한적 | DB 접근과 결합되면 위험 증가 |
+| DB와 KMS 권한 동시 유출 | 무관 | 부족 | 복호화 가능 | 분리·최소권한·탐지가 실패한 상태 |
+| 사용자 단말 악성코드 | 부족 | 무관 | 무관 | 입력 전·표시 후 plaintext 노출 가능 |
 
-이 표가 보여 주는 핵심은 “암호화”가 하나의 전역 스위치가 아니라는 점이다.
+### 15.1 DB-only 침해와 application 침해는 다른 사건이다
+
+SQL dump만 유출된 공격자는 nonce, ciphertext/tag, key version, wrapped DEK를 얻을 수 있다. 이 값들은 원래 공개 저장을 허용한 metadata다. 공격자가 KMS 권한과 plaintext DEK를 갖지 못했다면 field encryption의 보호 목표가 유지된다.
+
+애플리케이션 RCE에서는 상황이 바뀐다. 앱은 정상 업무를 위해 DB도 읽고 KMS도 호출한다. 공격자는 raw master key를 export하지 않고도 정상 decrypt 경로를 반복 호출하거나, 복호화 직후의 메모리와 응답을 훔칠 수 있다. `KMS를 사용한다`는 사실은 key material의 export를 줄이고 중앙 정책·감사를 제공하지만, **허가된 복호화 주체의 완전 장악**까지 막는 마법은 아니다.
+
+### 15.2 방어층은 완벽해서가 아니라 실패를 분리하기 위해 둔다
+
+Disk encryption, field encryption, IAM, TLS, audit log가 함께 있는 이유는 모두 같은 공격을 네 번 막기 위해서가 아니다. 노트북 분실, snapshot 유출, SQL credential 탈취, 네트워크 도청, 애플리케이션 RCE가 서로 다른 자산 조합을 주기 때문이다.
+
+```text
+공격 성공에 필요한 조합을 늘린다
+    DB dump만으로는 부족
+    KMS role만으로도 부족
+    둘을 결합하면 위험
+
+동시에 결합 시도를 제한하고 관찰한다
+    least privilege
+    decrypt rate/대상 제한
+    network boundary
+    audit와 이상 징후 탐지
+```
+
+따라서 “암호화되어 있나요?”보다 좋은 질문은 “이 공격자가 지금 가진 자산으로 어떤 plaintext까지 도달할 수 있나요?”다. 이것이 앞에서 배운 primitive를 실제 보안 주장으로 바꾸는 문장이다.
+
+> **15장 통과 기준:** DB-only 공격과 app RCE에서 공격자가 가진 능력의 차이, DB와 KMS 권한을 분리하는 목적, 방어층 하나가 모든 위협을 막지 못해도 가치가 있는 이유를 설명할 수 있으면 16장으로 이동한다.
 
 ---
 
-## 16. 무엇을 선택할지 빠르게 결정하는 법
+## 16. 알고리즘 이름보다 먼저 묻는 설계 질문
 
-### 사용자 비밀번호를 저장한다
+새 기능을 설계할 때 바로 `AES냐 RSA냐`를 고르면 문제와 도구가 뒤섞인다. 먼저 아래 질문을 순서대로 통과시키자. 답이 정해지면 사용할 primitive의 범주가 자연스럽게 좁아진다.
 
-```text
-Argon2id 또는 scrypt
-unique salt
-비용 파라미터와 버전 저장
-원문/복호화 key 없음
-```
+### 16.1 원문을 다시 복구해야 하는가
 
-### Webhook 요청이 공급자에게서 왔는지 검증한다
-
-공급자와 shared secret을 미리 공유할 수 있다면:
+복구할 필요가 없는 사용자 password라면 암호화하지 않는다. Unique salt와 비용 parameter를 사용한 Argon2id/scrypt verifier를 저장한다. 반대로 외부 API token처럼 나중에 원문을 제출해야 한다면 one-way verifier로는 요구사항을 만족할 수 없다. AEAD 암호화와 복호화 key 관리가 필요하다.
 
 ```text
-HMAC(secret, timestamp || canonical_request)
-timestamp/replay 정책
-constant-time tag comparison
+원문 복구 불필요 → password KDF verifier
+원문 복구 필요   → AEAD + key management
 ```
 
-프로토콜 제공자가 정한 공식 검증 절차를 따른다.
+### 16.2 누가 생성하고 누가 검증하는가
 
-### DB에 외부 API token을 저장하고 나중에 사용한다
+Webhook 공급자와 우리 서버 둘만 shared secret을 갖고 둘 다 tag 생성 능력을 가져도 된다면 HMAC이 맞을 수 있다. Timestamp와 canonical request를 MAC 입력에 넣고 replay window를 별도로 검사한다. 반면 artifact를 받은 누구나 검증하되 제작자만 새 서명을 만들게 하려면 digital signature가 필요하다.
 
 ```text
-AES-GCM application-level encryption
-key는 Secret Manager/KMS/Vault 경계에 둠
-nonce + ciphertext/tag + key version 저장
-tenant/record context를 AAD로 고려
+같은 secret을 가진 폐쇄된 양쪽 → HMAC
+private 생성 권한과 public 검증 권한 분리 → digital signature
 ```
 
-규모와 위험도가 커지면 envelope encryption을 고려한다.
+`누가 이 key를 갖는가`를 먼저 그리면 HMAC과 signature의 선택은 성능 비교가 아니라 권한 구조의 선택이 된다.
 
-### 브라우저와 API 서버가 통신한다
+### 16.3 데이터는 어느 경계를 건너는가
 
-```text
-직접 암호 프로토콜을 설계하지 말고 TLS/HTTPS 사용
-인증서 검증을 끄지 않음
-현대 TLS 라이브러리와 안전한 기본값 사용
-```
+Browser와 API server 사이에는 자체 암호 프로토콜을 만들지 않고 TLS/HTTPS를 사용하며 certificate/hostname 검증을 유지한다. DB에 저장되는 민감 필드는 AEAD로 보호하고 key는 DB와 다른 권한 경계에 둔다. 큰 파일이나 많은 record에는 random DEK로 데이터를 암호화하고 KEK/KMS로 DEK를 wrapping하는 envelope 구조를 고려한다.
 
-### 파일을 다른 사람의 public key로 보호한다
-
-대용량 데이터를 public-key 알고리즘으로 직접 암호화하지 않는다.
+다른 사람의 public key로 큰 파일을 보호할 때도 같은 원리가 반복된다.
 
 ```text
 random DEK 생성
-파일을 AEAD로 암호화
-수신자의 public-key 메커니즘으로 DEK를 보호
-encrypted file + protected DEK 저장/전송
+파일은 DEK와 AEAD로 암호화
+수신자의 public-key mechanism/KEM으로 DEK를 보호
+encrypted file + protected DEK 전달
 ```
 
-이것도 hybrid/envelope 구조다.
+Public-key primitive는 큰 파일 전체를 대신 처리하기보다 대칭키를 안전하게 전달하거나 합의하는 역할을 맡는다.
 
-### 누가 만든 artifact인지 공개 검증해야 한다
+### 16.4 유효했던 메시지를 다시 보내도 되는가
 
-```text
-digital signature
-signing private key 보호
-verification public key 배포와 신뢰 경로 설계
-```
+HMAC, signature, AES-GCM tag가 모두 정상이어도 예전 요청의 정확한 복사본은 여전히 유효할 수 있다. 결제·Webhook·0-RTT처럼 중복 실행이 위험하다면 timestamp, nonce registry, sequence, idempotency key, transaction state 중 무엇이 최신성을 결정하는지 명시한다. Replay는 `더 강한 cipher`가 아니라 protocol state로 막는다.
+
+마지막으로 선택한 알고리즘 이름을 문장에 넣어 보자.
+
+> `누가` 가진 `어떤 key`로 `무슨 bytes`를 처리해 `어떤 공격자`의 `어떤 행동`을 막으며, `무엇은 여전히 못 막는다`.
+
+이 문장을 완성하지 못하면 아직 라이브러리를 고를 때가 아니다.
 
 ---
 
-## 17. 자주 나오는 잘못된 설계
+## 17. 실패하는 설계에는 반복되는 오해가 있다
 
-### 소스 코드에 key 하드코딩
+잘못된 구현은 대개 API 이름을 몰라서보다 멘탈모델의 한 문장이 틀려서 생긴다. 아래 사례는 금지 목록으로 외우기보다 **어떤 잘못된 가정이 숨어 있는지** 찾아 읽자.
+
+### 17.1 “비밀값은 코드에 있어도 외부에 출력하지 않으면 된다”
 
 ```python
 KEY = b"production-secret..."
 ```
 
-Git history, 빌드 artifact, 컨테이너 이미지, 개발자 장비로 복제된다.
+소스 코드의 key는 Git history, 빌드 artifact, 컨테이너 이미지, 개발자 장비로 복제된다. 문제는 문자열 위치가 아니라 접근 경계와 rotation 가능성이다. Runtime identity로 Secret Manager/KMS에서 필요한 권한을 얻도록 설계한다.
 
-### DB에 key와 ciphertext를 나란히 저장
+### 17.2 “암호문이면 같은 DB에 key를 둬도 된다”
 
 ```text
 same database row:
 key + nonce + ciphertext
 ```
 
-DB 유출을 위협으로 두었다면 보호 경계가 사라진다.
+Nonce와 tag는 같은 row에 있어도 되지만 secret key까지 함께 두면 DB dump 하나로 복호화가 끝난다. DB 단독 유출을 위협으로 정했다면 key를 별도 권한 경계에 두어야 한다. 값이 길고 무작위처럼 보인다고 모두 같은 종류의 metadata는 아니다.
 
-### AES-GCM nonce 재사용
+### 17.3 “Nonce는 공개값이므로 아무 값이나 반복해도 된다”
 
-같은 key에서 nonce가 겹치면 counter mask가 재사용된다. 랜덤 96비트 nonce, 검증된 라이브러리, 시스템의 메시지 수와 충돌 정책을 함께 설계해야 한다.
+공개 가능성과 재사용 가능은 다른 성질이다. AES-GCM에서 같은 key와 nonce가 겹치면 counter mask가 재사용되고 기밀성과 인증이 무너진다. 검증된 라이브러리, 96-bit nonce 생성 규칙, key당 메시지 수와 충돌/재시작 정책을 함께 설계한다.
 
-### 암호화만 하고 인증하지 않음
+### 17.4 “AES로 암호화했으니 변경도 막았다”
 
-AES-CTR/CBC 등을 인증 없이 직접 사용하면 ciphertext 조작을 안전하게 거부하기 어렵다. 특별한 상호운용 요구가 없다면 AEAD를 기본으로 선택한다.
+AES-CTR이나 CBC 같은 encryption mode를 인증 없이 사용하면 공격자가 ciphertext를 조작했을 때 안전하게 거부한다는 보장이 없다. 특별한 상호운용 제약이 없다면 AES-GCM이나 ChaCha20-Poly1305 같은 AEAD를 기본으로 삼고, tag 검증 전 plaintext를 사용하지 않는다.
 
-### `SHA256(password)`를 비밀번호 저장값으로 사용
+### 17.5 “출력 길이가 충분하면 password도 안전하다”
 
-너무 빨라 offline guessing에 유리하다. password hashing/KDF를 사용한다.
+`SHA256(password)`는 32바이트지만 후보 하나를 너무 빠르게 검사할 수 있다. 출력 길이는 password의 엔트로피나 공격 비용이 아니다. Argon2id/scrypt와 unique salt, 서버의 rate limit·동시성 제한을 함께 사용한다. Base64로 한 번 더 감싸도 encoding만 바뀐다.
 
-### Base64를 암호화로 착각
+### 17.6 “TLS가 암호화됐으니 인증서 검증은 생략해도 된다”
 
-Base64는 가역 encoding이다.
+Hostname 또는 trust-chain 검증을 끄면 공격자와는 매우 안전하게 암호화된 연결을 만들 수 있다. 문제는 암호 강도가 아니라 상대 신원이다. 같은 이유로 네트워크에서 받은 public key가 수학적으로 유효하다는 사실만으로 그 소유자를 믿을 수 없다. Certificate, pin, 사전 배포, SSH known_hosts 같은 별도의 binding이 필요하다.
 
-### 인증서 검증 비활성화
+### 17.7 “안전한 primitive를 조립하면 안전한 protocol이 된다”
 
-TLS 암호화는 되더라도 공격자 서버와 암호화하고 있을 수 있다. hostname과 trust chain 검증이 서버 인증의 핵심이다.
+AES-GCM, X25519, Ed25519가 각각 안전해도 메시지 순서와 역할을 직접 정하는 순간 transcript binding, replay, downgrade, serialization ambiguity, key separation 문제가 생긴다. 라이브러리는 primitive의 오용을 일부 막을 뿐 protocol의 의미까지 만들어 주지 않는다. 네트워크에는 TLS, token에는 검증된 인증 framework, envelope encryption에는 cloud/Vault SDK처럼 분석된 구성을 우선한다.
 
-### Public key를 받았다는 이유만으로 소유자를 신뢰
-
-공격자도 key pair를 만들 수 있다. 인증서, pinned key, 사전 배포, SSH known_hosts 같은 별도의 신뢰 바인딩이 필요하다.
-
-### 모든 것을 자체 프로토콜로 구현
-
-암호 부품 각각이 안전해도 조합 순서, transcript binding, replay, downgrade, serialization ambiguity, key separation에서 실패할 수 있다. TLS와 검증된 envelope library처럼 이미 분석된 프로토콜을 우선한다.
+이 장의 공통된 교훈은 단순하다. **보안 성질은 함수 이름에서 시스템 전체로 자동 전파되지 않는다.** 입력, 상태, key 위치, 상대 신원, 실패 처리 중 하나가 틀리면 primitive는 정확히 계산되면서도 시스템은 실패한다.
 
 ---
 
 <a id="labs"></a>
 
-## 18. 현재 playground 실습 순서
+## 18. 실습실 — 관찰한 출력을 설명으로 바꾸기
+
+본문을 읽는 것만으로 멘탈모델이 완성되지는 않는다. 이 장은 이미 만든 playground를 책의 순서로 다시 걷는 실습실이다. 목표는 예상 출력과 같은 문자열을 얻는 것이 아니라, 실행 전 결과를 예측하고 실행 후 **어느 입력이 달라져서 어느 보안 성질이 드러났는지** 설명하는 것이다.
 
 ### 실행 준비와 실습 경계
 
@@ -2032,6 +3316,8 @@ python -m pytest
 
 ### 1단계: 기본 재료
 
+첫 단계에서는 아직 암호문을 만들지 않는다. `random_and_hash.py`에서 난수와 digest가 서로 독립된 값임을 확인하고, password verifier와 HMAC tag가 같은 “비슷해 보이는 bytes”여도 입력과 목적이 다름을 관찰한다.
+
 ```bash
 python3 01_primitives/random_and_hash.py
 python3 01_primitives/password_kdf.py
@@ -2039,6 +3325,8 @@ python3 01_primitives/hmac_demo.py
 ```
 
 ### 2단계: 대칭키와 저장
+
+두 번째 단계에서는 정상 복호화만 확인하지 않는다. Nonce 재사용과 AAD 바꿔치기를 일부러 실행해, `AESGCM.encrypt()` 한 번의 성공보다 **실패 조건을 지키는 protocol**이 더 중요하다는 사실을 확인한다.
 
 ```bash
 python3 02_symmetric/gcm_walkthrough.py
@@ -2049,6 +3337,8 @@ python3 02_symmetric/db_encryption_demo.py --help
 ```
 
 ### 3단계: 비대칭키의 계산과 역할
+
+세 번째 단계는 `public key`라는 하나의 말 아래 섞여 있던 역할을 분리한다. 작은 수의 계산은 등식을 눈으로 검산하기 위한 것이고, X25519와 Ed25519 예제는 실제 라이브러리의 서로 다른 API 경계를 보기 위한 것이다.
 
 ```bash
 python3 03_asymmetric/key_roles_lab.py dh
@@ -2082,6 +3372,8 @@ shared secret 자체가 전송되는가?
 
 ### 4단계: 인증서와 실제 TLS
 
+마지막 단계에서는 앞 실습의 부품을 직접 재구현하지 않는다. 실제 TLS state machine에 임시 인증서와 byte transport를 제공하고, 신뢰·hostname·암호화 record라는 세 가설을 각각 실패시켜 본다.
+
 ```bash
 python3 04_tls/tls_memory_lab.py
 python3 -m pytest
@@ -2112,64 +3404,83 @@ untrusted CA: rejected (...)
 
 ---
 
-## 19. 최종 정신 모델
+## 19. 책을 덮기 전에 — 하나의 요청을 끝까지 설명해 보기
 
-### 저장
+처음에는 SHA-256, HMAC, AES-GCM, X25519, 인증서가 서로 떨어진 명사였다. 이제 마지막으로 `shop.example`의 하루를 처음부터 끝까지 말해 보자. 각 문장에는 누가 가진 key인지, 무엇이 저장·전송되는지, 어떤 공격을 막는지가 들어간다.
+
+### 19.1 Alice가 로그인한다
+
+Alice의 password 원문은 DB에 없다. DB에는 unique salt, Argon2id parameter, verifier가 있다. 서버는 TLS 안에서 받은 password 후보에 같은 KDF를 실행해 verifier를 비교한다. DB 유출 공격자는 복호화할 key를 찾는 것이 아니라 후보 password를 오프라인으로 반복 계산한다. Memory-hard KDF는 그 시도마다 비용을 부과한다.
+
+로그인이 성공하면 서버는 password 대신 사용할 session cookie 또는 access token을 발급한다. 이 값이 Bearer credential이라면 소지한 자가 사용할 수 있으므로 TLS, 안전한 client 저장, 짧은 만료, 로그 마스킹이 중요하다. JWT인지 opaque token인지는 별도의 형식·검증 선택이다.
+
+### 19.2 브라우저가 API token을 전송한다
+
+브라우저는 `shop.example` 인증서의 chain과 hostname을 검증한다. 서버는 certificate private key로 현재 handshake에 참여했음을 증명하고, 양쪽의 ephemeral key agreement 결과는 HKDF를 거쳐 방향별 traffic key가 된다. HTTP body는 certificate public key로 직접 암호화되지 않는다. TLS record의 대칭 AEAD가 실제 bytes를 보호한다.
 
 ```text
-복구할 필요 없는 비밀번호
+certificate/signature → 누구와 연결했는가
+ephemeral key agreement → 공유 secret을 보내지 않고 만들었는가
+HKDF → 방향·목적별 traffic key를 만들었는가
+AEAD → HTTP bytes를 숨기고 변조를 거부하는가
+```
+
+TLS가 종료되는 load balancer나 app은 token plaintext를 볼 수 있다. 따라서 자물쇠는 “서버 조직 안의 누구도 볼 수 없다”가 아니라 “검증한 TLS endpoint까지의 네트워크 구간이 보호된다”는 뜻이다.
+
+### 19.3 애플리케이션이 token을 저장한다
+
+앱은 random nonce와 DEK/application key로 token을 AES-GCM 암호화하고, record identity와 version을 AAD에 묶는다. DB에는 nonce, ciphertext/tag, key version, 필요하다면 wrapped DEK가 남는다. Nonce와 tag는 공개 가능하지만 key는 별도 Secret Manager/KMS 권한 경계에 둔다.
+
+```text
+복구할 필요 없는 password
     → password KDF verifier
 
-복구해야 하는 민감 데이터
-    → random DEK/application key로 AEAD
-    → DB에는 ciphertext metadata
-    → key는 별도 권한 경계에서 관리
+나중에 복구해야 하는 token
+    → AEAD ciphertext + nonce + tag + metadata
 
-규모가 큰 데이터
-    → DEK로 데이터 암호화
-    → KMS의 KEK로 DEK wrapping
-    → ciphertext와 wrapped DEK를 함께 저장
+대량의 record와 key lifecycle
+    → DEK로 데이터 암호화 + KMS KEK로 DEK wrapping
 ```
 
-### 통신
+이 구조는 DB dump만 훔친 공격자를 막으려는 것이다. 복호화 권한이 있는 앱이 장악되면 공격자는 KMS API와 정상 decrypt path를 악용할 수 있다. 알고리즘이 실패한 것이 아니라 위협 모델의 경계가 달라진 것이다.
+
+### 19.4 Worker가 token을 다시 사용한다
+
+Worker는 workload identity로 KMS 권한을 얻고, 저장된 key version과 wrapped DEK를 이용해 올바른 DEK를 복구한다. 기대한 AAD로 tag를 검증한 뒤에만 plaintext token을 사용한다. 외부 API 호출은 또 다른 TLS 연결에서 보호된다. Browser 연결의 traffic key, DB field key, 외부 API 연결의 traffic key는 모두 용도와 수명이 다르다.
+
+이제 전체 시스템은 하나의 거대한 암호화 함수가 아니라 다음 경계들의 연속으로 보인다.
 
 ```text
-사전 공유키가 있음
-    → HMAC 또는 AEAD 가능
-
-사전 공유키가 없음
-    → ephemeral Diffie-Hellman으로 shared secret 합의
-
-상대 신원을 모름
-    → 서명 + 인증서/신뢰 anchor로 public key를 신원에 바인딩
-
-실제 애플리케이션 통신
-    → 이 조합을 직접 만들지 않고 TLS 사용
+Browser plaintext
+  → TLS-protected transit
+  → TLS endpoint/application plaintext
+  → AEAD-protected storage
+  → authorized application plaintext
+  → 새 TLS-protected transit
+  → External service plaintext
 ```
 
-### HTTPS
+각 화살표마다 key의 소유자와 공격자가 달라진다. 어떤 구간도 다른 구간의 보안을 자동으로 상속하지 않는다.
 
-```text
-인증서와 서명:
-내가 기대한 서버와 handshake하고 있는가?
+### 19.5 마지막으로 스스로 말해야 할 문장
 
-X25519/(EC)DHE:
-네트워크로 AES key를 보내지 않고 shared secret을 만들 수 있는가?
+새 암호 기능을 만났을 때 알고리즘 이름부터 묻지 않는다. 다음 문장을 채운다.
 
-HKDF:
-shared secret에서 방향과 목적이 분리된 traffic key를 만들 수 있는가?
+> **누가** `_____` key를 갖고, **어떤 bytes** `_____`를 입력해, **무엇** `_____`를 저장하거나 전송한다. 그래서 **공격자** `_____`는 **행동** `_____`을 하기 어렵다. 그러나 **남은 공격** `_____`은 여전히 가능하다.
 
-AES-GCM/ChaCha20-Poly1305:
-실제 HTTP bytes를 숨기고 변조를 거부할 수 있는가?
-```
+이 문장에 답하면 SHA-256을 HMAC처럼 오해하지 않고, verifier를 password 원문처럼 여기지 않으며, nonce를 key처럼 숨기지 않고, certificate public key로 HTTP body를 암호화한다고 말하지 않게 된다. 그리고 `KMS를 썼다`, `HTTPS다`, `AES-256이다` 같은 제품·알고리즘 이름만으로 시스템 전체의 안전을 선언하지 않게 된다.
 
-그래서 HTTPS는 별개의 마법이 아니다.
+이 책의 최종 멘탈모델은 한 문장으로 줄일 수 있다.
 
-> 지금까지 배운 난수, 해시, key derivation, 비대칭 key agreement, 전자서명, 인증서, 대칭 AEAD를 네트워크 공격자에 맞서도록 조립한 프로토콜이 TLS이고, 그 위에 HTTP를 올린 것이 HTTPS다.
+> **암호학은 데이터를 사라지게 하는 마법이 아니라, 특정 공격자에게 특정 능력을 주지 않도록 key·연산·신뢰 경계를 설계하는 기술이다.**
 
 ---
 
-## 20. 공식 참고 자료
+## 20. 더 깊이 들어가기 위한 출발점
+
+본문은 이해의 흐름을 위해 일부 protocol 세부와 보안 증명을 의도적으로 경계 밖에 두었다. 실제 구현·설계 결정을 내릴 때는 아래 표준과 제품 문서를 원문으로 확인한다. 이 목록은 본문의 대체물이 아니라, 이제 생긴 멘탈모델을 더 정확한 명세로 확장하기 위한 출발점이다.
+
+### 20.1 표준과 운영 문서
 
 - [NIST FIPS 197: Advanced Encryption Standard](https://csrc.nist.gov/pubs/fips/197/final)
 - [NIST SP 800-38D: Galois/Counter Mode](https://csrc.nist.gov/pubs/sp/800/38/d/final)
@@ -2180,13 +3491,30 @@ AES-GCM/ChaCha20-Poly1305:
 - [RFC 8446: TLS 1.3](https://www.rfc-editor.org/rfc/rfc8446.html)
 - [RFC 9106: Argon2](https://www.rfc-editor.org/rfc/rfc9106.html)
 - [RFC 5280: X.509 PKI Certificate and CRL Profile](https://www.rfc-editor.org/rfc/rfc5280.html)
+- [RFC 6750: OAuth 2.0 Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html)
+- [RFC 7519: JSON Web Token](https://www.rfc-editor.org/rfc/rfc7519.html)
+- [RFC 7662: OAuth 2.0 Token Introspection](https://www.rfc-editor.org/rfc/rfc7662.html)
+- [RFC 8725: JWT Best Current Practices](https://www.rfc-editor.org/rfc/rfc8725.html)
+- [RFC 9068: JWT Profile for OAuth 2.0 Access Tokens](https://www.rfc-editor.org/rfc/rfc9068.html)
 - [AWS Secrets Manager introduction](https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html)
 - [AWS KMS key concepts and hierarchy](https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html)
 - [Google Cloud KMS envelope encryption](https://cloud.google.com/kms/docs/envelope-encryption)
 - [HashiCorp Vault Transit secrets engine](https://developer.hashicorp.com/vault/docs/secrets/transit)
 - [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
 
+### 20.2 이 책의 전개에 참고한 공개 교재
+
+이 책의 설명과 예제는 현재 학습 세션을 위해 새로 구성했으며 아래 책을 번역하거나 축약한 것이 아니다. 다만 좋은 암호학 교재가 독자의 사고를 확장하는 순서에서 다음 원칙을 참고했다.
+
+- Mike Rosulek의 [The Joy of Cryptography](https://joyofcryptography.com/)에서 공격자가 무엇을 관찰하고 구별할 수 있는지 먼저 명시하는 태도를 참고했다.
+- Paar·Pelzl·Güneysu의 [Understanding Cryptography](https://www.cryptography-textbook.com/)에서 작은 계산, 실제 응용, 확인 문제를 연결하는 학습 단위를 참고했다.
+- Boneh·Shoup의 [A Graduate Course in Applied Cryptography](https://toc.cryptobook.us/)에서 primitive의 보안과 protocol 전체의 보안을 분리하는 관점을 참고했다.
+
 ---
+
+# 부록. 설명할 수 있는 지식으로 굳히기
+
+본문은 처음부터 끝까지 하나의 논지를 따라갔다. 부록은 일부러 참고 문서처럼 사용하도록 구성한다. 확인 문제로 공격자의 능력을 점검하고, 용어를 다시 찾고, 실제 Python 함수의 입력과 출력을 debugger처럼 추적한다.
 
 <a id="exercises"></a>
 
@@ -2210,7 +3538,7 @@ AES-GCM/ChaCha20-Poly1305:
 
 K는 고정하고 nonce만 바꿨다. Bob이 복호화할 수 있는 이유를 AES 입력 수준에서 설명하라.
 
-**해설:** AES 입력은 `N || counter`다. N이 달라지면 같은 K 아래에서도 mask가 달라진다. Bob은 수신한 N과 이미 가진 K로 동일 mask를 재현하고 ciphertext와 XOR한다. 필요한 것은 과거 메시지와 출력이 같다는 조건이 아니라 **이번 메시지의 양쪽 mask가 같다는 조건**이다. → 7.1절.
+**해설:** AES 입력은 `N || counter`다. N이 달라지면 같은 K 아래에서도 mask가 달라진다. Bob은 수신한 N과 이미 가진 K로 동일 mask를 재현하고 ciphertext와 XOR한다. 필요한 것은 과거 메시지와 출력이 같다는 조건이 아니라 **이번 메시지의 양쪽 mask가 같다는 조건**이다. → 7.2·7.4절.
 
 ### A.4 Nonce 공개와 nonce 재사용은 왜 전혀 다른가?
 
@@ -2220,7 +3548,7 @@ K는 고정하고 nonce만 바꿨다. Bob이 복호화할 수 있는 이유를 A
 
 DB의 Alice ciphertext와 `aad="alice"`를 Bob ciphertext와 `aad="bob"`으로 통째로 바꿨다. 앱은 DB에 적힌 AAD를 그대로 decrypt에 넘긴다. 왜 유효할 수 있나?
 
-**해설:** Bob ciphertext는 Bob AAD 아래에서 원래 유효했다. 앱이 현재 요청은 Alice라는 신뢰 문맥을 강제하지 않았기 때문이다. 예상 record/tenant identity에서 AAD를 만들거나 수신 metadata와 기대값을 비교해야 한다. 그래도 같은 row의 과거 유효 버전으로 rollback하는 공격은 최신성 상태 없이 막지 못한다. → 7.2절.
+**해설:** Bob ciphertext는 Bob AAD 아래에서 원래 유효했다. 앱이 현재 요청은 Alice라는 신뢰 문맥을 강제하지 않았기 때문이다. 예상 record/tenant identity에서 AAD를 만들거나 수신 metadata와 기대값을 비교해야 한다. 그래도 같은 row의 과거 유효 버전으로 rollback하는 공격은 최신성 상태 없이 막지 못한다. → 7.5절.
 
 ### A.6 KMS가 key를 숨기는데 앱 RCE는 왜 위험한가?
 
@@ -2260,6 +3588,12 @@ p=23, g=5, a=6, b=15에서 A와 B 및 S를 구하라. Mallory가 공개값끼리
 
 **해설의 골격:** TLS key는 브라우저와 TLS 종단이 연결용으로 갖는다. 앱은 token plaintext를 받은 뒤 DEK로 필드 암호화한다. DB에는 ciphertext/tag, nonce, wrapped DEK, key 식별자와 context metadata를 둔다. KEK는 KMS 경계에 남고, workload credential은 앱이 unwrap 권한을 행사하게 한다. DEK와 token plaintext는 사용 중 앱 메모리에 존재한다. TLS key를 DB 필드 key로 재사용하지 않는다. 이 설계의 공격 모델은 DB 단독 유출이지 앱 완전 장악까지가 아니다. → 8장·14장.
 
+### A.13 HS256 JWT가 API 요청을 서명하는가?
+
+사용자 앱이 `Authorization: Bearer <HS256-JWT>`로 `GET /patients`를 호출한다. HS256이 보호하는 bytes와 보호하지 않는 bytes를 구분하라. 또한 API server 세 곳이 모두 HS256 secret을 가진 경우 누가 새 token을 만들 수 있는가?
+
+**해설:** 전형적인 JWT Bearer access token에서 HS256은 JWT의 `base64url(header) || "." || base64url(payload)`에 대한 HMAC을 만든다. HTTP method, path, body 전체를 매 요청마다 HMAC하는 구조가 아니다. 사용자 앱은 발급된 token을 그대로 제시하므로 탈취한 소지자도 재사용할 수 있다. 세 API server는 동일 secret으로 MAC을 검증할 뿐 아니라 새 MAC도 만들 수 있으므로 모두 token 생성 능력을 갖는다. 검증 권한만 분리하려면 인증 서버가 private key로 서명하고 API에는 public key를 주는 비대칭 구조가 적합하다. → 6장·10.6절·12.10절.
+
 ---
 
 <a id="glossary"></a>
@@ -2274,10 +3608,10 @@ p=23, g=5, a=6, b=15에서 A와 B 및 S를 구하라. Mallory가 공개값끼리
 | Salt / pepper | KDF의 공개 구분 입력 / 별도로 보관하는 비밀 입력 | 5.3절 |
 | KDF / HKDF | key material 파생 함수 / HMAC 기반 extract-and-expand KDF | 5장, 10.4절 |
 | MAC / HMAC | 공유키 기반 인증값 / 해시를 사용한 특정 MAC 구성 | 6장 |
-| Block cipher / permutation | 고정 길이 블록 암호 / 일대일 가역 재배열 | 7.0절 |
-| XOR / keystream | 비트별 배타적 논리합 / 평문에 XOR하는 mask의 연속 | 7.0절 |
-| Nonce / counter / IV | 사용 구분값 / 증가하는 번호 / 모드의 초기화 값 | 7.1절, 12.6절 |
-| AEAD / AAD / tag | 부가 데이터 인증을 지원하는 인증 암호 / 공개 인증 문맥 / 검증값 | 7장 |
+| Block cipher / permutation | 고정 길이 블록 암호 / 일대일 가역 재배열 | 7.3절 |
+| XOR / keystream | 비트별 배타적 논리합 / 평문에 XOR하는 mask의 연속 | 7.3절 |
+| Nonce / counter / IV | 사용 구분값 / 증가하는 번호 / 모드의 초기화 값 | 7.2·7.4절, 12.6절 |
+| AEAD / AAD / tag | 부가 데이터 인증을 지원하는 인증 암호 / 공개 인증 문맥 / 검증값 | 7.1·7.2·7.5절 |
 | DEK / KEK / wrapping | 데이터 암호화 key / key 보호 key / key를 보호해 포장하는 연산 | 8.4절 |
 | KMS / HSM | key 관리·연산 서비스 / key 보호를 위한 하드웨어 경계 | 8.3절 |
 | Workload identity / IAM | 실행 중 앱의 신원 / 신원·권한 관리 체계 | 9.2절 |
@@ -2289,6 +3623,11 @@ p=23, g=5, a=6, b=15에서 A와 B 및 S를 구하라. Mallory가 공개값끼리
 | CSR / SAN | 인증서 발급 요청 / 인증서에 기록된 이름 확장 | 11장 |
 | Transcript / Finished | handshake 바이트 기록 / 협상 내용과 비밀 보유의 확인 메시지 | 12장 |
 | Ephemeral / forward secrecy | 일회성 키 수명 / 장기키 사후 유출로부터 과거 연결 보호 | 12.3·12.7절 |
+| Access / refresh / ID token | API 접근 권한 / access token 재발급 credential / OIDC 로그인 결과 | 12.10절 |
+| Bearer token | 별도의 key 소유 증명 없이 소지자가 사용할 수 있는 token | 12.10절 |
+| JWT / claims | JSON 기반 security token 형식 / token이 전달하는 속성·주장 | 12.10절 |
+| Opaque token / introspection | client가 해석하지 못하는 reference token / 인증 서버에 활성 상태를 묻는 검증 | 12.10절 |
+| HS256 / RS256 | HMAC-SHA256 기반 JWS 보호 / RSA-SHA256 공개키 서명 | 6장, 10.6절, 12.10절 |
 | Termination / mTLS | TLS 연결의 종단 / TLS 단계에서 상호 인증 | 13장 |
 
 IV(initialization vector)는 모드마다 요구사항이 다르다. 이 책의 AES-GCM에서는 API가 받는 nonce를 IV라고 부르기도 하지만, 모든 암호 모드의 IV에 GCM 규칙을 그대로 적용하면 안 된다. TLS의 static write IV는 다시 sequence number와 결합해 per-record nonce를 만든다.
@@ -2331,8 +3670,8 @@ IV(initialization vector)는 모드마다 요구사항이 다르다. 이 책의 
 | [D.2](#trace-password) | `password_kdf.py` | 5장 |
 | [D.3](#trace-hmac) | `hmac_demo.py` | 6장 |
 | [D.4](#trace-envelope) | `aes_gcm.py` | 7장 |
-| [D.5](#trace-counter) | `gcm_walkthrough.py` | 7.0~7.1절 |
-| [D.6](#trace-tag) | 라이브러리에 맡겼던 GCM tag 재구성 | 7.2절, D.5 |
+| [D.5](#trace-counter) | `gcm_walkthrough.py` | 7.3~7.4절 |
+| [D.6](#trace-tag) | 라이브러리에 맡겼던 GCM tag 재구성 | 7.5절, D.5 |
 | [D.7](#trace-attacks) | `nonce_reuse.py`, `aad_swap_demo.py` | 7장 |
 | [D.8](#trace-database) | `db_encryption_demo.py` | 8~9장 |
 | [D.9](#trace-exchange) | `x25519_exchange.py` | 10.1~10.5절 |
